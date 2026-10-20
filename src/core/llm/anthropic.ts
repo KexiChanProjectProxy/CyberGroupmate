@@ -162,6 +162,12 @@ export async function callAnthropic(
         ? await collectAnthropicStream(response, model)
         : (await response.json()) as AnthropicMessage;
 
+    // 安全分类器拦截：同样的输入重试也会被拒，直接抛出（不是 empty response，不会在同一 profile 上重试），
+    // 交给 callLLMWithFallback 换下一个 profile
+    if (data.stop_reason === "refusal") {
+        throw new Error(`Anthropic refusal from model ${model} (category=${data.stop_details?.category ?? "unknown"})`);
+    }
+
     const text = data.content
         ?.filter((c) => c.type === "text")
         .map((c) => c.text ?? "")
@@ -214,6 +220,8 @@ interface AnthropicUsage {
 interface AnthropicMessage {
     content: ContentBlock[];
     usage?: AnthropicUsage;
+    stop_reason?: string;
+    stop_details?: { type?: string; category?: string };
 }
 
 /**
@@ -224,6 +232,8 @@ export async function collectAnthropicStream(response: Response, model: string):
     if (!response.body) throw new Error(`Anthropic stream returned no body from model ${model}`);
     const blocks: ContentBlock[] = [];
     let usage: AnthropicUsage | undefined;
+    let stopReason: string | undefined;
+    let stopDetails: AnthropicMessage["stop_details"];
     let finished = false;
 
     const handle = (event: Record<string, any>) => {
@@ -247,6 +257,8 @@ export async function collectAnthropicStream(response: Response, model: string):
             case "message_delta":
                 // message_delta.usage 是累计值，覆盖 message_start 中的同名字段
                 if (event.usage) usage = { ...(usage ?? {}), ...event.usage };
+                if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
+                if (event.delta?.stop_details) stopDetails = event.delta.stop_details;
                 break;
             case "message_stop":
                 finished = true;
@@ -284,7 +296,7 @@ export async function collectAnthropicStream(response: Response, model: string):
     if (buffer.trim()) flushEvent(buffer);
     if (!finished) throw new Error(`Anthropic stream ended before completion from model ${model}`);
 
-    return { content: blocks.filter(Boolean), usage };
+    return { content: blocks.filter(Boolean), usage, stop_reason: stopReason, stop_details: stopDetails };
 }
 
 function toAnthropicEffort(value?: string): "low" | "medium" | "high" | "max" {
