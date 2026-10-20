@@ -77,3 +77,23 @@ describe("SandboxPool × background shell.runBackground", () => {
         assert.equal(sb.hasActiveBackgroundTasks(), false);
     });
 });
+
+describe("SandboxPool idle cleanup timing", () => {
+    it("reclaims an idle instance within ~30s of the idle timeout, not idleTimeout/2 later", async () => {
+        const { mock } = await import("node:test");
+        mock.timers.enable({ apis: ["setInterval", "Date"], now: 0 });
+        try {
+            const pool = new SandboxPool({ maxInstances: 2, idleTimeout: 600_000 });
+            let stopped = false;
+            const fake = { stop: async () => { stopped = true; }, isAlive: () => true, hasActiveBackgroundTasks: () => false };
+            (pool as unknown as { pool: Map<string, unknown> }).pool.set("c", { sandbox: fake, chatId: "c", inUse: false, lastUsedAt: 0, skillGeneration: 0 });
+            mock.timers.tick(600_000);
+            assert.equal(stopped, false);
+            mock.timers.tick(30_000);
+            assert.equal(stopped, true, "reclaimed within 30s after the 10-minute idle timeout");
+            await pool.dispose();
+        } finally {
+            mock.timers.reset();
+        }
+    });
+});

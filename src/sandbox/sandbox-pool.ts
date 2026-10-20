@@ -76,10 +76,11 @@ export class SandboxPool {
     constructor(config?: Partial<SandboxPoolConfig>) {
         this.config = { ...DEFAULT_POOL_CONFIG, ...config };
 
-        // 定期清理空闲实例
+        // 定期清理空闲实例：检查间隔不超过 30s，使实例（remote 模式下即 Spot VM）在空闲到期后半分钟内回收，
+        // 而不是最多再拖 idleTimeout / 2
         this.cleanupTimer = setInterval(() => {
             this.cleanupIdle();
-        }, Math.max(30000, this.config.idleTimeout / 2));
+        }, Math.min(30_000, Math.max(1_000, this.config.idleTimeout / 2)));
         // 允许进程退出
         if (this.cleanupTimer.unref) this.cleanupTimer.unref();
     }
