@@ -80,7 +80,7 @@ export interface LLMConfig {
      * 适用于某些 API 在出错时返回 200 但 content 包含错误信息的情况。
      */
     errorContentPatterns?: string[];
-    /** OpenAI Chat Completions 请求模式。仅 provider=openai 时生效；stream 在后台聚合完整输出，默认 non_stream。 */
+    /** Chat 请求模式。provider=openai（Chat Completions）与 provider=anthropic（Messages）生效；stream 在后台聚合完整输出，默认 non_stream。 */
     chatRequestMode?: "stream" | "non_stream";
     /** OpenAI Responses API 请求模式。仅 provider=openai_responses 时生效，默认 non_stream。 */
     responsesRequestMode?: "stream" | "non_stream" | "websocket";

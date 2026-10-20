@@ -81,7 +81,8 @@ llm_profiles:
   #     output: 10.00
   #     cached_input: 1.25
 
-  # provider: openai 的 profile 可设置 chat_request_mode: stream | non_stream。
+  # provider: openai / anthropic 的 profile 可设置 chat_request_mode: stream | non_stream。
+  # anthropic 的 stream 使用 Messages API SSE（stream: true），同样在后台聚合正文、thinking 与用量后返回。
   # 默认 non_stream；stream 使用 Chat Completions SSE，在后台聚合正文、推理和用量后返回。
   # 例如 ClinePass 等需要流式兼容的网关，设置 chat_request_mode: stream。
   # 流式默认发送 stream_options.include_usage: true；网关不支持时可通过
