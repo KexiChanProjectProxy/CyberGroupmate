@@ -235,3 +235,11 @@ DAEMON_SA=cgm-daemon@PROJECT.iam.gserviceaccount.com scripts/sandbox-vm/peer-tar
 `cybergroupmate.service`（systemd，开机自启，`deploy/daemon/cybergroupmate.service` 为模板）；
 Telegram `bot_api`（@SuperCyberCatbot）；LLM 为 Anthropic Messages 协议，经内网网关；Dashboard / MCP 仅监听 127.0.0.1
 （经 `gcloud compute ssh cgm-daemon --tunnel-through-iap -- -L 6767:127.0.0.1:6767` 访问）。
+
+### Dashboard 公网访问（Cloudflare Tunnel + Access）
+
+- `cloudflared-cgm.service`（`deploy/daemon/cloudflared-cgm.service`）运行远程托管 tunnel `cgm-daemon-dashboard`，
+  ingress 只有 `cgm.zenkexi.com → http://127.0.0.1:6767`，其余 404；Dashboard 仍只监听 127.0.0.1。
+- Access 应用 `cgm-dashboard`（self-hosted，24h 会话）+ 策略 `cgm-dashboard-owner`（仅允许指定邮箱）；
+  先建 Access 应用再建 DNS 记录，未登录访问页面 / API / WebSocket 均 302 到 Access 登录页。
+- Dashboard 自身的随机 token 保留为第二道认证（`~/cgm/config.yaml` 的 `dashboard.token`）。
