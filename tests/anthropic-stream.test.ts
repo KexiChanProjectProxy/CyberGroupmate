@@ -149,3 +149,26 @@ describe("Anthropic thinking signature fallback", () => {
         assert.equal(calls, 1);
     });
 });
+
+describe("Anthropic refusal", () => {
+    it("throws a non-empty-response error with the category so callers fall back instead of retrying", async () => {
+        const profile = await startServer((res) => {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ content: [], stop_reason: "refusal", stop_details: { type: "refusal", category: "some_category" } }));
+        });
+        await assert.rejects(
+            callAnthropic([{ role: "user", content: "hi" }], profile, profile.model, 1, 1024),
+            (err: Error) => /refusal/.test(err.message) && /some_category/.test(err.message) && !/empty response/.test(err.message),
+        );
+    });
+
+    it("detects refusals in stream mode", async () => {
+        const profile = await startServer((res) => {
+            res.writeHead(200, { "content-type": "text/event-stream" });
+            res.end(sse("message_start", { message: { usage: {} } })
+                + sse("message_delta", { delta: { stop_reason: "refusal", stop_details: { type: "refusal", category: "c2" } }, usage: { output_tokens: 0 } })
+                + sse("message_stop", {}));
+        }, "stream");
+        await assert.rejects(callAnthropic([{ role: "user", content: "hi" }], profile, profile.model, 1, 1024), /refusal.*c2/);
+    });
+});
