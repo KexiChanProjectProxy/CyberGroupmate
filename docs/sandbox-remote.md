@@ -215,3 +215,23 @@ npx tsx scripts/sandbox-vm/acceptance.ts
 | broker | Cloud Run `cgm-sandbox-broker`（us-west2），SA `cgm-sandbox-broker@`（`compute.instanceAdmin.v1` + 条件 `cgm-sandbox-vms-only`）；Cloud Scheduler `cgm-sandbox-broker-gc` 每小时 |
 
 验收（daemon VM 上运行 `acceptance.ts`，BROKER_URL 模式）：19/19；VM 按当日价格开在 northamerica-northeast1，会话结束后全部删除。
+
+### 访问其他 VPC 中的单个服务（仅 daemon）
+
+daemon 需要访问 default 网络中的 LLM 网关 `10.168.0.32:23000`（`cch-kexi-la`）：
+
+```bash
+TARGET_IP=10.168.0.32 PEER_NETWORK=default PEER_RANGE=10.128.0.0/9 \
+DAEMON_SA=cgm-daemon@PROJECT.iam.gserviceaccount.com scripts/sandbox-vm/peer-target.sh
+```
+
+- 已验证：daemon → 10.168.0.32:23000 可达；daemon → default 网络其他 VM 被拒；sandbox VM（即使清空自身 iptables）
+  → 10.168.0.32 / default 网络 / daemon / 公网均被拒；default 网络 → daemon / sandbox VM 均被拒。
+- 目标 VM 的主机防火墙为 nftables（默认 drop），已追加 `ip saddr 10.10.0.2 tcp dport 23000 accept`
+  （实时规则 + `/etc/nftables.conf`，原文件备份为 `/etc/nftables.conf.bak-cgm-20261020144050`）。
+
+### daemon 运行状态
+
+`cybergroupmate.service`（systemd，开机自启，`deploy/daemon/cybergroupmate.service` 为模板）；
+Telegram `bot_api`（@SuperCyberCatbot）；LLM 为 Anthropic Messages 协议，经内网网关；Dashboard / MCP 仅监听 127.0.0.1
+（经 `gcloud compute ssh cgm-daemon --tunnel-through-iap -- -L 6767:127.0.0.1:6767` 访问）。
