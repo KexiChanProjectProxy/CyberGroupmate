@@ -2,6 +2,14 @@
 
 ## 2026-10-20: CodeAct sandbox 隔离（remote 模式）+ host_call 安全加固
 
+### 🆕 临时 VM 模式（每个 chat 一台 C4 Spot VM）
+
+- daemon 每日拉取 C4 Spot 价格并在本地排序，请 Cloud Run broker 在最便宜的 region 开机；会话结束即删除 VM，home 随 VM 丢弃。
+- VM 创建 / 删除权限只在 broker（Cloud Run）中；daemon 只有 `run.invoker`。broker 只接受 C4 白名单机型与已建子网的 region，VM 安全参数固定。
+- agent 可用 `runtime.sandboxSize(size)` 提示下一台 VM 的规格。
+- 同一 GCP VPC 内 host ⇄ sandboxd 可不使用 mTLS（纯 TCP，访问控制由防火墙保证）；mTLS 仍可选。
+- 新增 `Dockerfile.broker`、`scripts/sandbox-vm/deploy-broker.sh`、`deploy/sandbox/sandboxd.ephemeral.yaml`。
+
 按 RCE 威胁模型重构 sandbox：agent 代码可在**独立 VM 上的隔离容器**中运行（无网络、gVisor、无凭据），
 host 侧把 sandbox 发来的一切视为不可信。部署与威胁分析见 [sandbox-remote.md](sandbox-remote.md)。
 

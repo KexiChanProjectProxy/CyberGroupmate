@@ -144,3 +144,52 @@ QUOTA_MIB=5120 npx tsx scripts/sandbox-vm/acceptance.ts
 
 自动化覆盖见 `tests/sandbox-remote.test.ts`、`tests/sandbox-hardening.test.ts`、`tests/host-call-security.test.ts`、
 `tests/remote-file-guard.test.ts`、`tests/notify-guard.test.ts`、`tests/protocol-frames.test.ts`。
+
+## 7. 临时 VM 模式（推荐）：每个 chat 一台 C4 Spot VM
+
+```
+daemon VM（可信代码 + 公网）          Cloud Run: cgm-sandbox-broker           按需 Spot VM（最便宜 region）
+┌──────────────────────────┐  ID token  ┌──────────────────────────────┐  compute ┌───────────────────────────┐
+│ main.ts                  │ ─────────▶ │ 唯一持有 VM 创建/删除权限      │ ───────▶ │ cgm-sbx-xxxx (C4, Spot)   │
+│  每日 Billing Catalog 价格 │  run.invoker│ 白名单：C4 机型 / 已建子网 region│          │ 无 SA、无外网 IP、gVNIC     │
+│  → 本地排序 → 请求开机      │            │ 固定：镜像 / tag / Spot /      │          │ sandboxd + gVisor session │
+│  会话结束 → 请求删除        │            │ Shielded / maxRunDuration      │          │ home 随 VM 删除            │
+└──────────┬───────────────┘            └──────────────────────────────┘          └─────────────▲─────────────┘
+           └──────────────── 全局 VPC 内网，纯 TCP 7443（防火墙只放行 cgm-host tag）─────────────────┘
+```
+
+- **权限隔离**：daemon 服务账号只有 broker 的 `roles/run.invoker`，没有任何 compute 权限。
+  即使 daemon 被攻陷，也只能经 broker 在白名单内开关 sandbox VM；broker 只读写带 `cgm-role=sandbox` label、名称为 `cgm-sbx-*` 的实例。
+- **价格**：daemon 每天通过 Cloud Billing Catalog API 拉取一次 Compute SKU，计算 `Spot Preemptible C4 Instance Core/Ram` 在各候选 region 的小时价并排序；
+  创建时按价格从低到高请求 broker，broker 在 region 内按 zone 回退（Spot 缺货）。
+- **规格**：默认 `small`（c4-standard-2）；agent 可调用 `runtime.sandboxSize("large")` 提示下一台 VM 的规格（当前 VM 不替换）。
+- **生命周期**：VM 随 sandbox 会话（空闲超时 / LRU / 错误）释放即删除；VM 自带 `maxRunDuration` 到期自动删除；broker `/v1/gc` 可由 Cloud Scheduler 定期清理。
+- **网络**：同一 VPC 内网纯 TCP（无 mTLS）。sandbox 子网无 NAT / PGA，egress deny-all，ingress 只放行 `cgm-host`。
+
+部署：
+
+```bash
+# 1) VPC：host 子网 + 每个候选 region 一个 sandbox 子网（cgm-sandbox-<region>）
+REGION=us-central1 SANDBOX_REGIONS="northamerica-northeast1 europe-west9 us-central1" scripts/sandbox-vm/gcp-network.sh
+
+# 2) 临时 VM 镜像（HOST_VM_IP = daemon VM 内网 IP）
+ZONE=us-central1-b SPOT=1 BUILD_FROM_SOURCE=1 EPHEMERAL=1 HOST_VM_IP=10.10.0.2 \
+IMAGE_FAMILY=cgm-sandbox-ephemeral scripts/sandbox-vm/build-image.sh
+
+# 3) broker（Cloud Run）；DAEMON_SA 为 daemon VM 的专用服务账号（不要用 Compute 默认服务账号）
+REGION=us-central1 DAEMON_SA=cgm-daemon@PROJECT.iam.gserviceaccount.com \
+SANDBOX_REGIONS="northamerica-northeast1 europe-west9 us-central1" GC_SCHEDULE="17 * * * *" \
+scripts/sandbox-vm/deploy-broker.sh
+
+# 4) daemon config.yaml：sandbox.remote.provisioner（见 config.example.yaml）
+
+# 5) 验收（在 daemon VM 上）
+BROKER_URL=https://cgm-sandbox-broker-xxxx.run.app SANDBOX_REGIONS="northamerica-northeast1 europe-west9 us-central1" \
+npx tsx scripts/sandbox-vm/acceptance.ts
+```
+
+注意：
+- C4 只支持 Hyperdisk 与 gVNIC；`build-image.sh` 会为镜像声明 `GVNIC`。
+- Cloud Run 前端保留以 `z` 结尾的路径（如 `/healthz`），broker 健康检查为 `/v1/health`。
+- 冷启动（创建 VM → sandboxd 就绪）约 1–2 分钟，`vm_ready_timeout_ms` 默认 5 分钟。
+- broker 服务账号拥有 `roles/compute.instanceAdmin.v1`：建议把 sandbox 放在**独立项目**中，使该权限不覆盖其他工作负载。

@@ -521,17 +521,29 @@ metrics:
 #   # limits:
 #   #   max_concurrent_host_calls: 8
 #   remote:
-#     endpoints:
-#       - name: cgm-sandbox-1
-#         address: 10.10.0.3:7443
-#         servername: cgm-sandbox-1     # 与服务端证书 SAN 一致
-#         max_sessions: 32
-#     tls:
-#       ca: /run/cgm-tls/ca.crt
-#       cert: /run/cgm-tls/client.crt
-#       key: /run/cgm-tls/client.key
+#     # ── 推荐：每个 chat 一台临时 C4 Spot VM（经 Cloud Run broker 创建，空闲回收时删除） ──
+#     # daemon 只需 broker 的 run.invoker；VPC 内网纯 TCP（不配置 tls）。部署见 docs/sandbox-remote.md §7
+#     provisioner:
+#       broker_url: https://cgm-sandbox-broker-xxxx-uc.a.run.app
+#       regions: [northamerica-northeast1, europe-west9, us-central1]   # 已建 cgm-sandbox-<region> 子网
+#       sizes: { small: c4-standard-2, medium: c4-standard-4, large: c4-standard-8 }  # agent: runtime.sandboxSize("large")
+#       default_size: small
+#       port: 7443
+#       vm_ready_timeout_ms: 300000
+#       price_cache_file: workspace/.sandbox-prices.json   # 每日刷新的 C4 Spot 价格
 #     connect_timeout_ms: 10000
 #     ping_interval_ms: 15000
+#
+#     # ── 或：常驻 sandbox VM（多 chat 共享，每 session 一个 gVisor 容器） ──
+#     # endpoints:
+#     #   - name: cgm-sandbox-1
+#     #     address: 10.10.0.3:7443
+#     #     servername: cgm-sandbox-1     # 与服务端证书 SAN 一致
+#     #     max_sessions: 32
+#     # tls:                              # 可选；同一 VPC 内可省略（纯 TCP）
+#     #   ca: /run/cgm-tls/ca.crt
+#     #   cert: /run/cgm-tls/client.crt
+#     #   key: /run/cgm-tls/client.key
 
 # ─── MCP Servers 预配置 ───
 # 在 Sandbox 启动时自动连接的 MCP Server 列表。
