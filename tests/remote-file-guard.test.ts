@@ -176,8 +176,10 @@ describe("InboundMediaRelay", () => {
         const live = fakeSandbox("telegram:-200");
         const relay = new InboundMediaRelay((chatId) => (chatId.endsWith("-200") ? [live] : []), ws);
         relay.onSaved({ path: photo, size: 4, chatId: "-200" });
-        await new Promise((r) => setTimeout(r, 20));
-        assert.equal(readFileSync(join(sandboxHome, "Downloads/photos/p1.jpg"), "utf-8"), "jpeg");
+        // 推送是异步的：等待落盘（并行跑全量测试时可能较慢）
+        const target = join(sandboxHome, "Downloads/photos/p1.jpg");
+        for (let i = 0; i < 200 && !existsSync(target); i++) await new Promise((r) => setTimeout(r, 25));
+        assert.equal(readFileSync(target, "utf-8"), "jpeg");
 
         const fresh = fakeSandbox("telegram:-200");
         await relay.onSandboxReady(fresh);

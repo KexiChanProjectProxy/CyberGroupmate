@@ -2,7 +2,8 @@
 # deploy-broker.sh — 部署 sandbox VM broker 到 Cloud Run，并完成权限隔离
 #
 # 权限模型：
-# - broker 使用专用服务账号 cgm-sandbox-broker@，拥有创建 / 删除 VM 的权限（roles/compute.instanceAdmin.v1）；
+# - broker 使用专用服务账号 cgm-sandbox-broker@，拥有创建 / 删除 VM 的权限（roles/compute.instanceAdmin.v1，
+#   带 IAM Condition：只能操作名称为 cgm-sbx-* 的实例与磁盘）；
 #   broker 自身只按白名单（C4 机型、已建子网的 region、固定镜像 / tag / 无 SA / 无外网 IP / Spot）创建 VM。
 # - daemon VM 的服务账号只获得该 Cloud Run 服务的 roles/run.invoker，没有任何 compute 权限。
 # - 服务不允许匿名访问（--no-allow-unauthenticated）。
@@ -41,8 +42,11 @@ g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BUILDER_S
 
 g iam service-accounts describe "$BROKER_SA" >/dev/null 2>&1 || \
   g iam service-accounts create "$BROKER_SA_NAME" --display-name "CyberGroupmate sandbox VM broker"
+# IAM Condition：instanceAdmin 只作用于 cgm-sbx-* 的实例与磁盘（共享项目中不能修改 / 删除其他 VM）
+BROKER_CONDITION='(resource.type != "compute.googleapis.com/Instance" || resource.name.extract("/instances/{name}").startsWith("cgm-sbx-")) && (resource.type != "compute.googleapis.com/Disk" || resource.name.extract("/disks/{name}").startsWith("cgm-sbx-"))'
 g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BROKER_SA" \
-  --role roles/compute.instanceAdmin.v1 --condition=None >/dev/null
+  --role roles/compute.instanceAdmin.v1 \
+  --condition="expression=${BROKER_CONDITION},title=cgm-sandbox-vms-only,description=Only cgm-sbx-* instances and disks" >/dev/null
 
 subnets="{"
 first=1

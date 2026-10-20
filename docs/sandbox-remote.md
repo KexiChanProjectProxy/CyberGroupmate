@@ -192,4 +192,6 @@ npx tsx scripts/sandbox-vm/acceptance.ts
 - C4 只支持 Hyperdisk 与 gVNIC；`build-image.sh` 会为镜像声明 `GVNIC`。
 - Cloud Run 前端保留以 `z` 结尾的路径（如 `/healthz`），broker 健康检查为 `/v1/health`。
 - 冷启动（创建 VM → sandboxd 就绪）约 1–2 分钟，`vm_ready_timeout_ms` 默认 5 分钟。
-- broker 服务账号拥有 `roles/compute.instanceAdmin.v1`：建议把 sandbox 放在**独立项目**中，使该权限不覆盖其他工作负载。
+- broker 服务账号的 `roles/compute.instanceAdmin.v1` 带 IAM Condition，只作用于名称为 `cgm-sbx-*` 的实例与磁盘
+  （`deploy-broker.sh` 自动设置）。已在共享项目中实测：可以创建 / 删除 `cgm-sbx-*`，
+  创建其他名称的 VM、停止或删除项目中其他 VM 均被拒绝。若希望连只读权限也隔离，可把 sandbox 放进独立项目。
