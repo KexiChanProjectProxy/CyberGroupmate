@@ -267,8 +267,8 @@
     "methods": [
       {
         "name": "connect",
-        "brief": "安装并连接一个 MCP Server。 根据配置使用 stdio 或 Streamable HTTP 建立连接，自动发现所有 tools。 连接信息会在宿主进程中全局持久化，所有 sandbox / subagent 共享， 直到显式调用 disconnect()。",
-        "fullDoc": "```typescript\nconnect(config: {\n        /** 显示名称，也用作 tool 命名空间 */\n        name: string;\n        /** 服务器用途描述，会展示给主 Agent 的模块名册 */\n        description?: string;\n        /** 传输方式。省略时：有 url 则视为 streamable-http，否则视为 stdio */\n        transport?: \"stdio\" | \"streamable-http\";\n        /** stdio 启动命令 */\n        command?: string;\n        /** stdio 命令参数 */\n        args?: string[];\n        /** stdio 环境变量（如 API keys） */\n        env?: Record<string, string>;\n        /** Streamable HTTP endpoint */\n        url?: string;\n        /** Streamable HTTP 附加请求头（如 Authorization） */\n        headers?: Record<string, string>;\n    }): Promise<{\n        name: string;\n        tools: Array<{ name: string; description: string }>;\n        /** 调用指定 tool */\n        call(toolName: string, args?: Record<string, unknown>): Promise<unknown>;\n    }>\n```\n\n\n安装并连接一个 MCP Server。\n根据配置使用 stdio 或 Streamable HTTP 建立连接，自动发现所有 tools。\n连接信息会在宿主进程中全局持久化，所有 sandbox / subagent 共享，\n直到显式调用 disconnect()。\n\n**参数：**\n- `config`: Server 配置\n- **返回值**: 包含 tools 列表和 call 方法的代理对象\n\n**示例：**\n```typescript\n// 连接 GitHub MCP Server\nconst github = await mcp.connect({\n  name: \"github\",\n  transport: \"streamable-http\",\n  url: \"https://example.com/mcp\",\n  headers: { Authorization: \"Bearer xxx\" }\n});\nconsole.log(\"可用工具:\", github.tools);\n\n// 调用 tool\nconst repos = await github.call(\"search_repositories\", { query: \"mcp typescript\" });\nconsole.log(repos);\n```"
+        "brief": "按名称（重新）连接一个管理员在 config.yaml `mcp_servers` 中预配置的 MCP Server。 连接参数（command / url / headers 等）一律取自宿主配置；sandbox 不能自定义服务器。 连接在宿主进程中全局共享，所有 sandbox / subagent 可见。 已连接的服务器无需再 connect，直接用 mcp.list() / mcp.call()。",
+        "fullDoc": "```typescript\nconnect(config: string | {\n        /** 预配置的服务器名 */\n        name: string;\n    }): Promise<{\n        name: string;\n        tools: Array<{ name: string; description: string }>;\n        /** 调用指定 tool */\n        call(toolName: string, args?: Record<string, unknown>): Promise<unknown>;\n    }>\n```\n\n\n按名称（重新）连接一个管理员在 config.yaml `mcp_servers` 中预配置的 MCP Server。\n连接参数（command / url / headers 等）一律取自宿主配置；sandbox 不能自定义服务器。\n连接在宿主进程中全局共享，所有 sandbox / subagent 可见。\n已连接的服务器无需再 connect，直接用 mcp.list() / mcp.call()。\n\n**参数：**\n- `config`: 预配置的服务器名，或 `{ name }`（其余字段会被忽略）\n- **返回值**: 包含 tools 列表和 call 方法的代理对象\n\n**示例：**\n```typescript\nconst github = await mcp.connect(\"github\");\nconsole.log(\"可用工具:\", github.tools);\n\n// 调用 tool\nconst repos = await github.call(\"search_repositories\", { query: \"mcp typescript\" });\nconsole.log(repos);\n```"
       },
       {
         "name": "disconnect",
@@ -539,23 +539,23 @@
       },
       {
         "name": "env.list",
-        "brief": "列出所有受管环境变量",
-        "fullDoc": "```typescript\nlist(): Promise<Array<{ key: string; value: string; scope: \"both\" | \"host\" | \"sandbox\" }>>\n```\n\n\n列出所有受管环境变量"
+        "brief": "列出 sandbox 可见的受管环境变量（scope 为 sandbox / both；host 作用域不可见）",
+        "fullDoc": "```typescript\nlist(): Promise<Array<{ key: string; value: string; scope: \"both\" | \"sandbox\" }>>\n```\n\n\n列出 sandbox 可见的受管环境变量（scope 为 sandbox / both；host 作用域不可见）"
       },
       {
         "name": "env.get",
-        "brief": "查询单个环境变量，不存在返回 null",
-        "fullDoc": "```typescript\nget(key: string): Promise<{ key: string; value: string; scope: \"both\" | \"host\" | \"sandbox\" } | null>\n```\n\n\n查询单个环境变量，不存在返回 null"
+        "brief": "查询单个 sandbox 可见的环境变量，不存在或不可见返回 null",
+        "fullDoc": "```typescript\nget(key: string): Promise<{ key: string; value: string; scope: \"both\" | \"sandbox\" } | null>\n```\n\n\n查询单个 sandbox 可见的环境变量，不存在或不可见返回 null"
       },
       {
         "name": "env.set",
-        "brief": "新增或覆盖环境变量。",
-        "fullDoc": "```typescript\nset(key: string, value: string, scope?: \"both\" | \"host\" | \"sandbox\"): Promise<{ ok: true; key: string; value: string; scope: \"both\" | \"host\" | \"sandbox\" }>\n```\n\n\n新增或覆盖环境变量。\n\n**参数：**\n- `scope`: both(默认)/host/sandbox"
+        "brief": "新增或覆盖 sandbox 作用域环境变量（仅对 sandbox 可见）。 不能覆盖管理员配置的 host / both 变量，也不能与宿主现有环境变量同名。",
+        "fullDoc": "```typescript\nset(key: string, value: string, scope?: \"sandbox\"): Promise<{ ok: true; key: string; value: string; scope: \"sandbox\" }>\n```\n\n\n新增或覆盖 sandbox 作用域环境变量（仅对 sandbox 可见）。\n不能覆盖管理员配置的 host / both 变量，也不能与宿主现有环境变量同名。\n\n**参数：**\n- `scope`: 只接受 \"sandbox\"（默认）"
       },
       {
         "name": "env.delete",
-        "brief": "删除环境变量（不存在时安全返回）",
-        "fullDoc": "```typescript\ndelete(key: string): Promise<{ ok: true; deleted: boolean }>\n```\n\n\n删除环境变量（不存在时安全返回）"
+        "brief": "删除 sandbox 作用域环境变量（不存在时安全返回；不能删除 host / both 变量）",
+        "fullDoc": "```typescript\ndelete(key: string): Promise<{ ok: true; deleted: boolean }>\n```\n\n\n删除 sandbox 作用域环境变量（不存在时安全返回；不能删除 host / both 变量）"
       },
       {
         "name": "remind",
@@ -809,7 +809,7 @@
       {
         "name": "downloadMedia",
         "brief": "下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。 优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。",
-        "fullDoc": "```typescript\ndownloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>\n```\n\n\n下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。\n优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。\n\n⚠️ **保存到磁盘必须用 `fs.writeFileBinary()`，不能用 `fs.writeFile()`。**\n`data.buffer` 是 base64 字符串；`fs.writeFile` 会把它当 UTF-8 文本写入导致文件损坏。\n\n**参数：**\n- `location`: TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象。通常使用 msg.mediaInfo.fileId。\n- `chatId`: 可选，用于 file reference 过期时自动 refetch\n- `messageId`: 可选，同上\n- `uniqueFileId`: 可选，用于缓存命中\n\n**示例：**\n```typescript\n// ✅ 正确：下载并保存为可用的图片文件\nconst msg = messages[0];\nif (msg.mediaInfo?.fileId) {\n  const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n  fs.writeFileBinary(\"workspace/Downloads/photo.jpg\", data.buffer);\n  // 之后可以 vision.see(\"workspace/Downloads/photo.jpg\") 或 sendMedia(chatId, { type: 'photo', file: 'workspace/Downloads/photo.jpg' })\n}\n```\n\n```typescript\n// ❌ 错误：writeFile 写入 base64 字符串，文件损坏\n// fs.writeFile(\"photo.jpg\", data.buffer);\n```\n\n```typescript\n// 错误：await telegram.downloadMedia(msg.mediaInfo)\n// 正确：await telegram.downloadMedia(msg.mediaInfo.fileId, msg.chat.id, msg.id, msg.mediaInfo.uniqueFileId)\n```"
+        "fullDoc": "```typescript\ndownloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; path?: string; savedToSandbox?: boolean; }>\n```\n\n\n下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。\n优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。\n\n⚠️ **保存到磁盘必须用 `fs.writeFileBinary()`，不能用 `fs.writeFile()`。**\n`data.buffer` 是 base64 字符串；`fs.writeFile` 会把它当 UTF-8 文本写入导致文件损坏。\n大文件（约 3 MB 以上）在隔离沙盒中会由宿主直接保存：此时 `buffer` 为空、`savedToSandbox` 为 true，\n文件已在 `data.path`，直接使用该路径即可。\n\n**参数：**\n- `location`: TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象。通常使用 msg.mediaInfo.fileId。\n- `chatId`: 可选，用于 file reference 过期时自动 refetch\n- `messageId`: 可选，同上\n- `uniqueFileId`: 可选，用于缓存命中\n\n**示例：**\n```typescript\n// ✅ 正确：下载并保存为可用的图片文件\nconst msg = messages[0];\nif (msg.mediaInfo?.fileId) {\n  const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n  fs.writeFileBinary(\"workspace/Downloads/photo.jpg\", data.buffer);\n  // 之后可以 vision.see(\"workspace/Downloads/photo.jpg\") 或 sendMedia(chatId, { type: 'photo', file: 'workspace/Downloads/photo.jpg' })\n}\n```\n\n```typescript\n// ❌ 错误：writeFile 写入 base64 字符串，文件损坏\n// fs.writeFile(\"photo.jpg\", data.buffer);\n```\n\n```typescript\n// 错误：await telegram.downloadMedia(msg.mediaInfo)\n// 正确：await telegram.downloadMedia(msg.mediaInfo.fileId, msg.chat.id, msg.id, msg.mediaInfo.uniqueFileId)\n```"
       },
       {
         "name": "downloadAsBuffer",

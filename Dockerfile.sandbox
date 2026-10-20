@@ -1,0 +1,70 @@
+# Dockerfile.sandbox — 隔离 sandbox VM 使用的镜像（两个 target）
+#
+#   docker build -f Dockerfile.sandbox --target session  -t cybergroupmate:agentic-sandbox .
+#   docker build -f Dockerfile.sandbox --target sandboxd -t cybergroupmate:agentic-sandboxd .
+#
+# session：每个 CodeAct session 一个容器（--network none、只读 rootfs、非 root、gVisor）。
+#          不含 config.yaml、dashboard、agentic CLI，也不含 curl / wget（无网络下只会让 agent 反复重试）。
+# sandboxd：VM 上的会话守护进程（session 镜像 + docker CLI），见 deploy/sandbox/。
+
+# ── Stage 1: 依赖（与 Dockerfile 的 deps stage 指令一致，命中构建缓存） ──
+FROM node:22-bookworm AS deps
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
+RUN npm install -g pnpm@11.3.0
+
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ ./patches/
+RUN pnpm install --frozen-lockfile
+
+# ── Stage 2: 在有网络的构建阶段获取 uv，运行层不需要 curl ──
+FROM debian:bookworm-slim AS uvfetch
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/out sh
+
+# ── Stage 3: 公共运行层 ──
+FROM node:22-bookworm AS runtime
+
+# agent bash 工具（与主镜像一致，去掉网络工具 wget / curl / dnsutils）
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ffmpeg zip unzip jq imagemagick git ca-certificates \
+    python3 python3-pip python3-venv python3-dev build-essential \
+    libmagic-dev \
+    pandoc poppler-utils util-linux \
+    && rm -rf /var/lib/apt/lists/*
+# 基础镜像自带 curl / wget：移除二进制（libcurl 等库保留，git 仍可用于本地仓库）
+RUN rm -f /usr/bin/curl /usr/bin/wget
+
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+COPY --from=uvfetch /out/uv /out/uvx /usr/local/bin/
+
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY src ./src
+
+# 防御：镜像中不得包含宿主配置
+RUN test ! -e /app/config.yaml && rm -rf /app/src/dashboard/public
+
+# 去掉所有 setuid / setgid 位；准备容器内固定目录
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true \
+    && mkdir -p /home/agent /opt/skills \
+    && chown 1000:1000 /home/agent
+
+# ── Target: sandboxd（VM 级会话守护进程） ──
+FROM runtime AS sandboxd
+COPY --from=docker:27.3.1-cli /usr/local/bin/docker /usr/local/bin/docker
+ENV SANDBOXD_CONFIG=/etc/cgm/sandboxd.yaml
+ENTRYPOINT ["node", "node_modules/tsx/dist/cli.mjs", "src/sandbox/remote/sandboxd.ts"]
+
+# ── Target: session（默认） ──
+FROM runtime AS session
+ENV HOME=/home/agent
+USER 1000:1000
+WORKDIR /home/agent
+# 直接调用 tsx（不用 npx：npx 可能尝试联网）
+ENTRYPOINT ["node", "/app/node_modules/tsx/dist/cli.mjs", "/app/src/sandbox/supervisor/main.ts"]

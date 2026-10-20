@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-10-20: CodeAct sandbox 隔离（remote 模式）+ host_call 安全加固
+
+按 RCE 威胁模型重构 sandbox：agent 代码可在**独立 VM 上的隔离容器**中运行（无网络、gVisor、无凭据），
+host 侧把 sandbox 发来的一切视为不可信。部署与威胁分析见 [sandbox-remote.md](sandbox-remote.md)。
+
+### 🔒 安全修复（local 模式同样生效）
+
+- **`mcp.connect`**：sandbox 只能按名称连接 `config.yaml mcp_servers` 预配置的服务器。此前可让宿主执行任意 stdio 命令，或借 `${VAR}` 插值把宿主密钥发到任意 URL。
+  ⚠️ 请检查 `workspace/mcp-connections.json`：以前 agent 自行连接的服务器会被持久化并在启动时自动重连。
+- **`runtime.env.*`**：只能读写 `scope: sandbox` 变量；不能覆盖 / 删除 host、both 变量；不能创建与宿主现有环境变量同名的 key（此前可借此改写 `NODE_OPTIONS` 或删除宿主 `PATH` / API key）。默认 scope 改为 `sandbox`。
+- **伪造消息**：sandbox 的 `runtime.notify` 不能再伪造 `nc.message`（任意群 / 任意用户的入站消息）或 `system.agent_message_sent`（写入任意群消息日志）。
+- **skills 依赖安装**：宿主在全新目录中仅用 package.json + lockfile 安装，`--ignore-scripts`、最小环境变量（项目级 `.npmrc` 不再生效）。
+- **协议防护**：worker → host 帧 zod 校验、单行 4 MiB 上限、原型污染键过滤、事件限速、并发 host_call ≤ 8、`extendSteps` / `timeoutMs` 钳制；违规即终止 session。
+- **禁用词**在 host 侧再次检查；不再把 `config.mcpServers`（含 headers / env）注入 worker 环境。
+- **环境变量白名单**：worker / bash 默认不再继承宿主完整 `process.env`（`sandbox.inherit_host_env: true` 可恢复旧行为）。
+
+### 🆕 remote 模式
+
+- `sandbox.mode: remote`：host 通过 mTLS 连接 sandbox VM 上的 `sandboxd`；每个 session 一个 `docker run --runtime runsc --network none --read-only --cap-drop ALL` 容器，每个 chat 一个持久 home。
+- 文件通道：sandbox 文件经 host inbox 交给平台 adapter，引用宿主文件 / 内网 URL 被拒绝；入站媒体推送到对应聊天的 sandbox；大文件 `downloadMedia` 由宿主直接写入 sandbox。
+- skills 按内容 generation 分发（只读挂载）；可选 `skills_sync_back` 回传（默认关闭）。
+- 部署产物：`Dockerfile.sandbox`（`session` / `sandboxd` target）、`deploy/sandbox/`、`scripts/sandbox-vm/`（VPC / 防火墙、golden image、VM、iptables、配额、证书）；CI 发布 `:agentic-sandbox` / `:agentic-sandboxd`。
+- `npx tsx src/cli.ts sandboxd [health|logs]` 查询 sandbox VM 状态。
+
+### 重构
+
+- `src/sandbox/pty-manager.ts`：PTY 子系统从 `sandbox.ts` 提取。
+- `src/sandbox/supervisor/`：worker + PTY 由 `SupervisorCore` 持有；`Sandbox` 改为统一帧协议的客户端（local 模式在进程内运行 supervisor，行为与之前一致）。
+- `Sandbox` 的 shell 管理方法（`listShellTabs` / `readShellTab` / `getShellCwd` / `sendShellInput`）改为异步。
+- 提示词中的入站媒体路径改为 workspace 相对路径（`Downloads/…`）。
+
 ## 2026-10-15: 修复贴纸发送策略失效 + 新增 searchStickers 搜索 API
 
 meta-codeact 重构（移除 `dispatch-handler.ts`）时丢失了 `sticker_sending_mode` 的全部运行时校验，导致 `allow_listed` / `disallow_all` 模式下 Agent 仍可通过 `sendSticker`（任意 uniqueFileId）或 `sendMedia(type=sticker)` 发送允许列表外的贴纸。本次在 adapter 层重新接入强制校验，并为 Agent 提供合规的贴纸库搜索入口。

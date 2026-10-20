@@ -1,0 +1,31 @@
+[Unit]
+Description=CyberGroupmate sandbox daemon (sandboxd)
+Documentation=file:///opt/cgm/docs/sandbox-remote.md
+After=docker.service cgm-iptables.service var-lib-cgm.mount
+Requires=docker.service cgm-iptables.service var-lib-cgm.mount
+
+[Service]
+Type=simple
+# sandboxd 是 VM 级受信组件：持有 docker.sock 以为每个 session 启动 gVisor 容器。
+# 它只解析经 mTLS 认证的 host 握手帧；session 方向的数据为纯字节转发。
+# 自身用 runc 运行（gVisor 无法嵌套 docker），使用 host 网络以监听 7443。
+ExecStartPre=-/usr/bin/docker rm -f cgm-sandboxd
+ExecStart=/usr/bin/docker run --rm --name cgm-sandboxd \
+  --runtime runc \
+  --network host \
+  --user 0:0 \
+  --read-only --tmpfs /tmp:size=64m \
+  --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+  --security-opt no-new-privileges \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/lib/cgm:/var/lib/cgm \
+  -v /etc/cgm:/etc/cgm:ro \
+  -e SANDBOXD_CONFIG=/etc/cgm/sandboxd.yaml \
+  ghcr.io/archeb/cybergroupmate:agentic-sandboxd
+ExecStop=/usr/bin/docker stop -t 20 cgm-sandboxd
+ExecReload=/usr/bin/docker kill -s HUP cgm-sandboxd
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

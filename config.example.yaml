@@ -505,10 +505,39 @@ metrics:
 #     # 命中硬上限后回落到的消息条数 (32)
 #     trim_target_messages: 32
 
+# ─── CodeAct Sandbox 运行方式 ───
+# local（默认，开发用）：worker 与 bash 在本机运行，只与宿主隔离到进程级别。
+# remote（生产）：每个 session 运行在独立 VM 上的隔离容器（无网络、gVisor、无凭据），
+#   通过 mTLS 连接 sandboxd。部署见 docs/sandbox-remote.md。
+# sandbox:
+#   mode: remote
+#   # local 模式下默认只把白名单变量与 scope=sandbox/both 的 env_vars 传给 sandbox；
+#   # 设为 true 恢复旧行为（继承宿主完整环境变量，含 bot token 等）。remote 模式下忽略。
+#   inherit_host_env: false
+#   # 允许把 agent 在 sandbox 中编写的 skill 回传到宿主 workspace/skills（默认 false）
+#   skills_sync_back: false
+#   ready_timeout_ms: 30000
+#   # 协议上限覆盖（键名见 src/sandbox/protocol/limits.ts，蛇形命名）
+#   # limits:
+#   #   max_concurrent_host_calls: 8
+#   remote:
+#     endpoints:
+#       - name: cgm-sandbox-1
+#         address: 10.10.0.3:7443
+#         servername: cgm-sandbox-1     # 与服务端证书 SAN 一致
+#         max_sessions: 32
+#     tls:
+#       ca: /run/cgm-tls/ca.crt
+#       cert: /run/cgm-tls/client.crt
+#       key: /run/cgm-tls/client.key
+#     connect_timeout_ms: 10000
+#     ping_interval_ms: 15000
+
 # ─── MCP Servers 预配置 ───
 # 在 Sandbox 启动时自动连接的 MCP Server 列表。
 # 每个条目必须指定 name，并提供 command（stdio）或 url（Streamable HTTP）。
-# auto_connect 默认 true，设为 false 则不自动连接（需手动通过 mcp.connect 连接）。
+# auto_connect 默认 true，设为 false 则不自动连接。
+# sandbox 只能通过 mcp.connect("name") 按名称（重新）连接这里预配置的服务器，不能自定义服务器。
 # mcp_servers:
 #   - name: filesystem
 #     transport: stdio
@@ -540,9 +569,10 @@ metrics:
 # ─── 环境变量 ───
 # 自定义环境变量，通过 Dashboard 管理面板可视化编辑。
 # 每个变量可设置作用域 (scope):
-#   both    — 同时注入主进程和沙盒环境
+#   both    — 同时注入主进程和沙盒环境（沙盒视为不可信：不要把宿主凭据设为 both）
 #   host    — 仅注入主进程，沙盒不可见（适用于敏感密钥）
 #   sandbox — 仅注入沙盒环境，主进程不可见（适用于 Skill 第三方 API Key）
+# sandbox 内的 runtime.env.* 只能读写 scope=sandbox 的变量；host / both 只能由管理员修改。
 # env_vars:
 #   - key: TAVILY_API_KEY
 #     value: "tvly-your-api-key"

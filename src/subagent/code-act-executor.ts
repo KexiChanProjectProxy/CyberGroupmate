@@ -868,6 +868,8 @@ export class CodeActExecutor {
             apiTypeDefs: loadApiTypeDefs(platform, allowedSkills, currentConfig.privacy?.allowLlmMarkSensitive !== false),
             // 隐私 prompt 指引选择性注入：fence 仅 enforce!=off 时讲；markSensitive 指引还需 allowLlmMarkSensitive。
             privacyGuidance: currentConfig.privacy?.enforce !== "off",
+            sandboxNoNetwork: currentConfig.sandbox?.mode === "remote",
+            sandboxHasNetwork: currentConfig.sandbox?.mode !== "remote",
             privacyMarkGuidance: currentConfig.privacy?.enforce !== "off" && currentConfig.privacy?.allowLlmMarkSensitive !== false,
             platformModule: platform,
             hasTodos: todoItems.length > 0,

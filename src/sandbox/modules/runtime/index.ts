@@ -48,7 +48,7 @@ export function installRuntime(env: CapabilityRegistryEnv) {
             set: async (
                 key: string,
                 value: string,
-                scope: "both" | "host" | "sandbox" = "both",
+                scope: "both" | "host" | "sandbox" = "sandbox",
             ): Promise<{ ok: true; key: string; value: string; scope: "both" | "host" | "sandbox" }> => {
                 if (!_callbacks) throw new Error("Runtime not initialized");
                 const result = await _callbacks.callHost("runtime.env.set", [key, value, scope]);

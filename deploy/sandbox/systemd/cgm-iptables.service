@@ -1,0 +1,14 @@
+[Unit]
+Description=CyberGroupmate sandbox VM firewall (iptables)
+After=docker.service network-online.target
+Wants=network-online.target
+Before=cgm-sandboxd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/cgm/vm.env
+ExecStart=/opt/cgm/scripts/sandbox-vm/iptables.sh
+
+[Install]
+WantedBy=multi-user.target

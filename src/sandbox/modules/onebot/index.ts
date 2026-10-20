@@ -65,6 +65,13 @@ function inferExt(buffer: Buffer): string {
     return ".bin";
 }
 
+/** remote sandbox：大文件由 host 直接写入 sandbox，结果只带路径 */
+function savedToSandboxPath(result: unknown): string | null {
+    if (!result || typeof result !== "object") return null;
+    const rec = result as Record<string, unknown>;
+    return rec.savedToSandbox === true && typeof rec.path === "string" ? rec.path : null;
+}
+
 function saveDownloadedMedia(mediaRef: string, buffer: Buffer): string {
     const dir = pathResolve(process.cwd(), "Downloads");
     mkdirSync(dir, { recursive: true });
@@ -554,6 +561,11 @@ export function createOneBotClientProxy(
             if (!ref) throw new Error("onebot.downloadMedia: mediaRef is required");
             const result = await env.callHost("onebot.downloadMedia", [ref]);
             if (typeof result === "string") return result;
+            const saved = savedToSandboxPath(result);
+            if (saved) {
+                env.emitOutput(`[QQ] downloadMedia ok file=${saved}`);
+                return saved;
+            }
             const buffer = bufferFromHostDownload(result);
             const localPath = saveDownloadedMedia(ref, buffer);
             env.emitOutput(`[QQ] downloadMedia ok file=${localPath}`);

@@ -4,6 +4,7 @@
  * All routes require ?token= query param matching config (handled by middleware).
  */
 
+import { invalidateSkillsGeneration } from "../sandbox/skills/skills-sync.js";
 import { Router } from "express";
 import * as fs from "node:fs";
 import { join } from "node:path";
@@ -553,7 +554,11 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     router.post("/skills/reload", async (_req, res) => {
         try {
             const activeSandboxes = deps.sandboxPool.entries();
+            // remote sandbox 无法读取 host 的 skills 目录：标记过期，下一个 session 使用新的 skills generation
+            invalidateSkillsGeneration();
+            const evicted = activeSandboxes.some(({ sandbox }) => sandbox.isRemote()) ? deps.sandboxPool.invalidateSkills() : 0;
             const results = await Promise.all(activeSandboxes.map(async ({ chatId, sandbox }) => {
+                if (sandbox.isRemote()) return { chatId, ok: true, deferred: true };
                 try {
                     const result = await sandbox.execute("const loaded = await skills.reload(); console.log(JSON.stringify(loaded));", 15000);
                     if (result.error) {
@@ -569,6 +574,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json({
                 ok: true,
                 activeSandboxCount: activeSandboxes.length,
+                sandboxesEvicted: evicted,
                 reloadedSkills: discoverSkills().map((skill) => ({
                     id: skill.id,
                     bindingName: skill.bindingName,

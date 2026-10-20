@@ -182,7 +182,7 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             assert.equal(callbacks[0].taskId, task.taskId);
         });
 
-        it("#6a direct pending messages are injected into current observation", () => {
+        it("#6a direct pending messages are injected into current observation", async () => {
             const executor = new CodeActExecutor("chat1");
             const drained: Array<{ ids: string[]; source: string }> = [];
             executor.setPendingMessageDrainHandler((messages, source) => {
@@ -205,18 +205,18 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
                 replyToMessageId: "sent-1",
             });
 
-            const observation = executor.drainPendingMessagesForObservation();
+            const observation = (await executor.drainPendingMessagesForObservation())?.content;
 
             assert.match(observation ?? "", /\[📩 新消息到达\]/);
             assert.match(observation ?? "", /前面这句也要一起看/);
             assert.match(observation ?? "", /你在吗/);
             assert.match(observation ?? "", /reply to msg#sent-1 #sent-1/);
             assert.match(observation ?? "", /\[mid-turn direct attention: reply-to-agent\]/);
-            assert.equal(executor.drainPendingMessages(), null);
+            assert.equal(await executor.drainPendingMessages(), null);
             assert.deepEqual(drained, [{ ids: ["msg-1", "msg-2"], source: "observation" }]);
         });
 
-        it("#6b non-direct pending messages stay on the next-turn injection path", () => {
+        it("#6b non-direct pending messages stay on the next-turn injection path", async () => {
             const executor = new CodeActExecutor("chat1");
             const drained: Array<{ ids: string[]; source: string }> = [];
             executor.setPendingMessageDrainHandler((messages, source) => {
@@ -230,9 +230,9 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
                 timestamp: "2026-05-13T10:00:00.000Z",
             });
 
-            assert.equal(executor.drainPendingMessagesForObservation(), null);
+            assert.equal(await executor.drainPendingMessagesForObservation(), null);
 
-            const nextTurn = executor.drainPendingMessages();
+            const nextTurn = (await executor.drainPendingMessages())?.content;
 
             assert.match(nextTurn ?? "", /\[📩 新消息到达\]/);
             assert.match(nextTurn ?? "", /普通插话/);
@@ -240,7 +240,7 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             assert.deepEqual(drained, [{ ids: ["msg-1"], source: "turn" }]);
         });
 
-        it("#6c direct pending messages stay highlighted if they miss current observation", () => {
+        it("#6c direct pending messages stay highlighted if they miss current observation", async () => {
             const executor = new CodeActExecutor("chat1");
 
             executor.pushPendingMessage({
@@ -252,13 +252,13 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
                 directReason: "@mention",
             });
 
-            const nextTurn = executor.drainPendingMessages();
+            const nextTurn = (await executor.drainPendingMessages())?.content;
 
             assert.match(nextTurn ?? "", /\[mid-turn direct attention: @mention\]/);
             assert.match(nextTurn ?? "", /看一下我这条/);
         });
 
-        it("#6c.1 pending sticker messages use cached descriptions", () => {
+        it("#6c.1 pending sticker messages use cached descriptions", async () => {
             const executor = new CodeActExecutor("chat1");
             (executor as any).memory = {
                 getStickerDescription: (uniqueFileId: string) => uniqueFileId === "sticker-known"
@@ -280,7 +280,7 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
                 }),
             });
 
-            const nextTurn = executor.drainPendingMessages();
+            const nextTurn = (await executor.drainPendingMessages())?.content;
 
             assert.match(nextTurn ?? "", /贴纸 🫶: 比心示好的温柔贴纸/);
             assert.doesNotMatch(nextTurn ?? "", /file-sticker/);
@@ -295,6 +295,7 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
 
                 const executor = new CodeActExecutor("chat1");
                 (executor as any).memory = memory;
+                (executor as any).visionConfig = { stickerSendingMode: "allow_listed" };
                 (executor as any).mediaDownloader = {
                     getExistingPath(uniqueFileId: string) {
                         if (uniqueFileId.startsWith("missing-")) return null;

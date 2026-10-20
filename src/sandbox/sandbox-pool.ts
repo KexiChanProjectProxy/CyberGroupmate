@@ -10,7 +10,8 @@
  * 参考设计：subagent.md §3.1, subtask.md S3.1
  */
 
-import { Sandbox } from "./sandbox.js";
+import { Sandbox, type SandboxRuntimeConfig } from "./sandbox.js";
+import { invalidateSkillsGeneration } from "./skills/skills-sync.js";
 import type { SubagentConfig } from "../subagent/types.js";
 import { DEFAULT_SUBAGENT_CONFIG } from "../subagent/types.js";
 import { createLogger } from "../core/logger.js";
@@ -23,14 +24,14 @@ export interface SandboxPoolConfig {
     maxInstances: number;
     /** 空闲超时 (ms)，超过后自动回收。默认 600000 (10min) */
     idleTimeout: number;
-    /** Sandbox 工作脚本路径 */
-    workerScript?: string;
     /** Sandbox 工作目录 */
     workDir?: string;
     /** 仅注入 sandbox 进程的额外环境变量 */
     sandboxEnv?: Record<string, string>;
     /** 仅限 host 的环境变量 key 列表（从 sandbox 进程 env 中剔除） */
     hostOnlyKeys?: string[];
+    /** sandbox 运行方式（local / remote transport）；默认 local */
+    runtime?: SandboxRuntimeConfig;
     /**
      * 新 sandbox 实例创建后的初始化回调。
      * 用于注册 hostCallHandler、event listener 等。
@@ -130,6 +131,7 @@ export class SandboxPool {
             chatId,
             this.config.sandboxEnv,
             this.config.hostOnlyKeys,
+            this.config.runtime,
         );
         // 先注册 event listener 和 hostCallHandler（必须在 start() 之前，
         // 因为 worker 初始化阶段 skill-loader 就会通过 IPC 发送 print 消息）
@@ -326,6 +328,7 @@ export class SandboxPool {
      */
     invalidateSkills(): number {
         this._skillGeneration++;
+        invalidateSkillsGeneration();
         const evicted = this.evictIdle();
         const stale = Array.from(this.pool.values()).filter(e => e.skillGeneration < this._skillGeneration);
         const staleBg = stale.filter(e => e.sandbox.hasActiveBackgroundTasks()).length;

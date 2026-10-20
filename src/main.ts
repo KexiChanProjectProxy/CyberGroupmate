@@ -18,6 +18,8 @@ import { SandboxPool } from "./sandbox/sandbox-pool.js";
 import type { ShellWakeEvent } from "./sandbox/sandbox.js";
 import { installSkillsDependencies } from "./sandbox/skill-loader.js";
 import { createSandboxHostCallHandler } from "./sandbox/host-call-handler.js";
+import { buildSandboxRuntime } from "./sandbox/runtime-config.js";
+import { InboundMediaRelay } from "./sandbox/files/inbound-media.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
 import { createMemoryStore } from "./core/memory-factory.js";
 import {
@@ -372,12 +374,28 @@ async function main(): Promise<void> {
     // ─── 自动检查并安装 Skills 依赖 ───
     await installSkillsDependencies(join(process.cwd(), "workspace", "skills"));
 
+    const sandboxRuntime = buildSandboxRuntime(appConfig.sandbox, join(process.cwd(), "workspace", "skills"));
+    log.info("CodeAct sandbox 模式", {
+        mode: sandboxRuntime.mode,
+        endpoints: appConfig.sandbox.remote?.endpoints.map((ep) => ep.name) ?? [],
+    });
+    for (const ev of appConfig.envVars ?? []) {
+        if (ev.scope === "both" && /(token|secret|key|password|passwd|credential)/i.test(ev.key)) {
+            log.warn("env_vars 中疑似凭据的变量对 sandbox 可见（scope=both），请确认是否应改为 host", { key: ev.key });
+        }
+    }
+    // remote 模式：入站媒体推送到对应 chat 的 sandbox（local 模式共享 workspace，无需推送）
+    let inboundRelay: InboundMediaRelay | null = null;
     const sandboxPool = new SandboxPool({
         maxInstances: appConfig.subagent?.maxSandboxInstances ?? 5,
         idleTimeout: appConfig.subagent?.sandboxIdleTimeout ?? 600_000,
         sandboxEnv: currentEnvPlan.sandboxVisible,
         hostOnlyKeys: currentEnvPlan.managedKeys.filter((k) => !(k in currentEnvPlan.sandboxVisible)),
+        runtime: sandboxRuntime,
         onAcquire: (sandbox, chatId) => {
+            if (inboundRelay) {
+                sandbox.once("ready", () => void inboundRelay?.onSandboxReady(sandbox));
+            }
             // 每个新建的 sandbox 实例注册 host call handler
             sandbox.on("notify", (event: Record<string, unknown>) => {
                 nc.push(event as { type: string;[key: string]: unknown });
@@ -439,6 +457,16 @@ async function main(): Promise<void> {
             log.debug("SandboxPool onAcquire: 已初始化", { chatId });
         },
     });
+    if (sandboxRuntime.mode === "remote") {
+        inboundRelay = new InboundMediaRelay(
+            (mediaChatId) => sandboxPool.entries()
+                .filter((entry) => entry.chatId === mediaChatId || getRawId(entry.chatId) === getRawId(mediaChatId))
+                .map((entry) => entry.sandbox)
+                .filter((sb) => sb.isAlive()),
+            join(process.cwd(), DATA_DIR),
+        );
+        sharedMediaDownloader.onSaved((info) => inboundRelay?.onSaved(info));
+    }
     // 经由工厂构建：本地 SQLite 存储 + 检索，并注入全局隐私分级。
     // embedding 检索由 embedding.enabled 开关控制（默认关 → 走 FTS5/LIKE 关键词召回；
     // 开启后写入异步生成向量、recall 走向量，存量需跑一次 cli memory backfill-embeddings）。

@@ -12,7 +12,7 @@
  * @see docs/sandbox-module-guide.md
  */
 
-import { readFileSync, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync, writeFileSync, mkdtempSync, copyFileSync, rmSync, renameSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -49,7 +49,10 @@ function toSafeSkillName(str: string): string {
 /** 基于源码位置定位项目根（src/sandbox/skill-loader.ts → 项目根），不依赖 process.cwd() */
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
-const SKILLS_DIR = resolve(PROJECT_ROOT, "workspace/skills");
+/** worker 侧可由 host 通过 SANDBOX_SKILLS_DIR 指定（remote 模式下为容器内 home/skills） */
+const SKILLS_DIR = process.env.SANDBOX_SKILLS_DIR
+    ? resolve(process.env.SANDBOX_SKILLS_DIR)
+    : resolve(PROJECT_ROOT, "workspace/skills");
 
 export interface LoadedSkill {
     /** Sandbox 中注入的 JS 变量名。保留 name 字段兼容旧调用方。 */
@@ -280,7 +283,11 @@ function createSkillMdModuleEntry(skill: DiscoveredSkill): ModuleEntry | null {
  * 用于将 Skill 脚本目录加入 shell PATH。
  */
 export function getAgentSkillScriptDirs(projectRoot: string = process.cwd()): string[] {
-    const skillsDir = resolve(projectRoot, "workspace/skills");
+    return getAgentSkillScriptDirsIn(resolve(projectRoot, "workspace/skills"));
+}
+
+/** 列出 skillsDir 下带 SKILL.md 的 agent skill 的 scripts/ 目录 */
+export function getAgentSkillScriptDirsIn(skillsDir: string): string[] {
     if (!existsSync(skillsDir)) return [];
 
     const scriptDirs: string[] = [];
@@ -450,6 +457,56 @@ export function parseAllSkillDocs(): ModuleEntry[] {
 }
 
 /**
+ * 在宿主进程中安装 skills 依赖。
+ *
+ * workspace/skills 可被 agent 写入，因此视为不可信输入：
+ * - 只把 package.json / package-lock.json 复制到一个全新目录中安装，项目级 .npmrc
+ *   （可设置 git= / script-shell= / ${ENV} 插值的 token 等）不会被读取；
+ * - --ignore-scripts：不执行任何依赖的 lifecycle 脚本；
+ * - 最小化环境变量：不把宿主密钥传给 npm；
+ * - 安装成功后再整体替换 node_modules。
+ */
+async function installSkillsDepsIsolated(skillsPath: string): Promise<void> {
+    const stagingDir = mkdtempSync(join(dirname(skillsPath), ".skills-install-"));
+    try {
+        copyFileSync(join(skillsPath, "package.json"), join(stagingDir, "package.json"));
+        const lockPath = join(skillsPath, "package-lock.json");
+        if (existsSync(lockPath)) copyFileSync(lockPath, join(stagingDir, "package-lock.json"));
+
+        await new Promise<void>((resolveInstall, reject) => {
+            // 使用跨平台方式执行 npm (主要防 windows 环境)
+            const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+            const child = spawn(npmCmd, ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], {
+                cwd: stagingDir,
+                stdio: "inherit",
+                env: {
+                    PATH: process.env.PATH ?? "",
+                    HOME: stagingDir,
+                    LANG: process.env.LANG ?? "C.UTF-8",
+                    ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
+                    ...(process.env.NO_PROXY ? { NO_PROXY: process.env.NO_PROXY } : {}),
+                    ...(process.platform === "win32" && process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+                },
+            });
+            child.on("close", (code) => {
+                if (code === 0) resolveInstall();
+                else reject(new Error(`npm install failed with code ${code}`));
+            });
+            child.on("error", reject);
+        });
+
+        const stagedModules = join(stagingDir, "node_modules");
+        const targetModules = join(skillsPath, "node_modules");
+        rmSync(targetModules, { recursive: true, force: true });
+        if (existsSync(stagedModules)) renameSync(stagedModules, targetModules);
+        const stagedLock = join(stagingDir, "package-lock.json");
+        if (existsSync(stagedLock)) copyFileSync(stagedLock, lockPath);
+    } finally {
+        rmSync(stagingDir, { recursive: true, force: true });
+    }
+}
+
+/**
  * 检查 workspace/skills 目录，如有 package.json 且 hash 发生变化，则自动执行 npm install
  * @param skillsPath skills 根目录路径
  */
@@ -479,28 +536,9 @@ export async function installSkillsDependencies(skillsPath: string): Promise<voi
 
         if (shouldInstall) {
             log.info("📦 检测到 Skills 依赖变更，正在自动安装...");
-
-            await new Promise<void>((resolve, reject) => {
-                // 使用跨平台方式执行 npm (主要防 windows 环境)
-                const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-
-                const child = spawn(npmCmd, ["install", "--omit=dev", "--no-audit", "--no-fund"], {
-                    cwd: skillsPath,
-                    stdio: "inherit",
-                    env: process.env
-                });
-
-                child.on("close", (code) => {
-                    if (code === 0) {
-                        try { writeFileSync(hashFilePath, currentHash, "utf-8"); } catch { }
-                        log.info("✅ Skills 依赖安装完成");
-                        resolve();
-                    } else {
-                        reject(new Error(`npm install failed with code ${code}`));
-                    }
-                });
-                child.on("error", reject);
-            });
+            await installSkillsDepsIsolated(skillsPath);
+            try { writeFileSync(hashFilePath, currentHash, "utf-8"); } catch { }
+            log.info("✅ Skills 依赖安装完成");
         }
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -605,6 +643,12 @@ export async function reloadAllSkills(): Promise<LoadedSkill[]> {
 export async function installDepsRuntime(packages: string[]): Promise<string> {
     if (packages.length === 0) {
         throw new Error("请指定至少一个要安装的包名");
+    }
+    if (process.env.SANDBOX_NO_NETWORK === "1") {
+        throw new Error(
+            "沙盒没有网络访问，无法 npmInstall。请让管理员在 Dashboard → Skills 中把依赖加入 workspace/skills/package.json，" +
+            "host 安装后下一个 session 即可使用。",
+        );
     }
 
     // 安全检查：包名只允许 @scope/name 格式

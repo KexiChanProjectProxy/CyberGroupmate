@@ -472,7 +472,7 @@ describe("Sandbox", () => {
         assert.equal(ev.reason, "idle");
         assert.equal(ev.tabId, tabId);
         // 进程未被 kill：tab 仍存活且 busy
-        const tabs = sb.listShellTabs();
+        const tabs = await sb.listShellTabs();
         const t = tabs.find((x) => x.id === tabId);
         assert.ok(t && t.state === "busy", "idle 唤醒不应 kill 进程");
     });
@@ -488,7 +488,7 @@ describe("Sandbox", () => {
         const ev = await wake;
         assert.equal(ev.reason, "hard");
         assert.equal(ev.tabId, tabId);
-        const t = sb.listShellTabs().find((x) => x.id === tabId);
+        const t = (await sb.listShellTabs()).find((x) => x.id === tabId);
         assert.ok(t && t.state === "busy", "hard 唤醒不应 kill 进程");
         await sb.killShellTab(tabId);
     });
@@ -511,29 +511,30 @@ describe("Sandbox", () => {
     it("late host_call result after worker stdin closes never crashes the host", async () => {
         const sb = await makeSandbox();
         const internals = sb as unknown as {
-            child?: { stdin?: NodeJS.WritableStream & { write: (...a: unknown[]) => unknown; destroy?: () => void } };
+            output?: NodeJS.WritableStream & { write: (...a: unknown[]) => unknown; destroy?: () => void };
             stopping: boolean;
-            safeWrite: (message: string) => boolean;
+            writeFrame: (frame: Record<string, unknown>) => boolean;
             handleHostCall: (id: string, method: string, args: unknown[]) => Promise<void>;
         };
-        const stdin = internals.child?.stdin;
-        assert.ok(stdin, "worker stdin should exist");
+        const output = internals.output;
+        assert.ok(output, "sandbox transport should exist");
 
-        // 关键守卫：stdin 上必须挂着 error 监听，否则 EPIPE 会成为 unhandled 'error' 直接终止进程。
-        assert.ok((stdin as unknown as NodeJS.EventEmitter).listenerCount("error") >= 1);
+        // 关键守卫：输出流上必须挂着 error 监听，否则 EPIPE 会成为 unhandled 'error' 直接终止进程。
+        assert.ok((output as unknown as NodeJS.EventEmitter).listenerCount("error") >= 1);
 
-        // 流仍健康，但 write 同步抛 EPIPE 时，safeWrite 必须吞掉而不是让进程崩溃。
-        const originalWrite = stdin.write.bind(stdin);
-        stdin.write = () => { throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" }); };
-        assert.equal(internals.safeWrite("x"), false);
-        stdin.write = originalWrite as typeof stdin.write;
+        // 流仍健康，但 write 同步抛 EPIPE 时，writeFrame 必须吞掉而不是让进程崩溃。
+        const originalWrite = output.write.bind(output);
+        output.write = () => { throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" }); };
+        assert.equal(internals.writeFrame({ type: "ping", id: "x" }), false);
+        output.write = originalWrite as typeof output.write;
 
-        // 模拟超时停止窗口：stopping=true 且 stdin 已 destroy，但 child 引用尚未在 exit 回调里置空。
+        // 模拟超时停止窗口：stopping=true 且输出流已 destroy。
         // 此时一个迟到的 host_call 结果到达：handleHostCall 必须正常 resolve，不得向死管道写。
         internals.stopping = true;
-        stdin.destroy?.();
+        output.destroy?.();
         await internals.handleHostCall("late-1", "mcp.list", []);
-        assert.equal(internals.safeWrite("anything"), false);
+        assert.equal(internals.writeFrame({ type: "ping", id: "y" }), false);
+        internals.stopping = false;
     });
 
     it("hasActiveBackgroundTasks tracks the background monitor lifecycle", async () => {

@@ -12,6 +12,8 @@
 
 import { createInterface } from "node:readline";
 import { Sandbox } from "./sandbox/sandbox.js";
+import { buildSandboxRuntime } from "./sandbox/runtime-config.js";
+import { remoteControlRequest } from "./sandbox/transport/remote-transport.js";
 import { NotificationCenter } from "./event/notification-center.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
 import { createMemoryStore } from "./core/memory-factory.js";
@@ -35,7 +37,17 @@ const DATA_DIR = "workspace";
 async function cmdSandbox(): Promise<void> {
     log.info("启动 Sandbox REPL...");
 
-    const sandbox = new Sandbox();
+    const sandbox = new Sandbox(
+        undefined,
+        "cli",
+        undefined,
+        undefined,
+        buildSandboxRuntime(loadConfig().sandbox, join(process.cwd(), DATA_DIR, "skills")),
+    );
+    sandbox.setHostCallHandler(async (method) => {
+        if (method === "mcp.list") return [];
+        throw new Error(`REPL 不支持 host 调用: ${method}`);
+    });
     await sandbox.start();
     log.info("Sandbox 就绪。输入 TypeScript 代码执行，输入 .exit 退出。");
     log.info("提示：多行输入以空行结束执行。");
@@ -477,6 +489,36 @@ async function cmdStatus(): Promise<void> {
     }
 }
 
+/**
+ * sandboxd — 查询 remote sandbox VM 的健康状态 / 日志
+ */
+async function cmdSandboxd(args: string[]): Promise<void> {
+    const cfg = loadConfig().sandbox;
+    if (cfg.mode !== "remote" || !cfg.remote) {
+        console.log("sandbox.mode 不是 remote，没有可查询的 sandboxd");
+        return;
+    }
+    const remote = cfg.remote;
+    const transport = { endpoints: remote.endpoints, tls: remote.tls, connectTimeoutMs: remote.connectTimeoutMs };
+    const sub = args[0] ?? "health";
+    for (const endpoint of remote.endpoints) {
+        try {
+            if (sub === "logs") {
+                const since = args[1] ? Date.now() - Number(args[1]) * 60_000 : 0;
+                const res = await remoteControlRequest(transport, endpoint, { type: "logs_tail", since });
+                const lines = Array.isArray(res.lines) ? res.lines as Array<{ line: string }> : [];
+                console.log(`── ${endpoint.name} (${lines.length} 行) ──`);
+                for (const l of lines) console.log(l.line);
+            } else {
+                const res = await remoteControlRequest(transport, endpoint, { type: "health" });
+                console.log(`${endpoint.name} (${endpoint.address}): ${JSON.stringify(res)}`);
+            }
+        } catch (err) {
+            console.log(`${endpoint.name} (${endpoint.address}): ❌ ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+}
+
 // ─── Main ───
 
 const HELP = `
@@ -490,6 +532,7 @@ const HELP = `
   memory <subcmd>        记忆系统查询（recall/browse/reflect/status）
   config                 检查配置加载结果
   status                 查看 agent 运行状态和统计
+  sandboxd [health|logs [分钟]]  查询 remote sandbox VM 的健康状态 / 最近日志
 
 环境变量:
   LOG_LEVEL=debug|info|warn|error   日志级别（默认: info）
@@ -515,6 +558,9 @@ async function main(): Promise<void> {
             break;
         case "status":
             await cmdStatus();
+            break;
+        case "sandboxd":
+            await cmdSandboxd(args);
             break;
         default:
             console.log(HELP);

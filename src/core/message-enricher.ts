@@ -12,6 +12,8 @@
  * 后续扩展点：语音转写、视频帧提取、Poll 格式化等
  */
 
+import { resolve as pathResolve, relative as pathRelative, isAbsolute as pathIsAbsolute, sep as pathSep } from "node:path";
+
 import { processMediaBatch, type MediaAttachment, type ProcessedMedia, type DownloadFn, type StickerCache } from "./vision-processor.js";
 import { resolveComponentTimeout, type LLMConfig, type VisionConfig } from "./config.js";
 import type { MediaDownloader } from "./media-downloader.js";
@@ -21,6 +23,18 @@ import { createLogger } from "./logger.js";
 import { formatMessageSender, formatMessageMentions, type MessageMention } from "./message-provenance.js";
 import { extractUrls, fetchOpenGraphBatch, downloadOgImage, type OGResult } from "./opengraph.js";
 import { callLLMWithFallback, type ChatMessage } from "./llm.js";
+
+
+/**
+ * 提示词中展示给 agent 的文件路径：workspace 内的文件用相对路径（Downloads/…）。
+ * local 模式下 sandbox cwd 即 workspace；remote 模式下入站媒体会被推送到 sandbox home 的同一相对路径。
+ */
+export function toAgentFilePath(filePath: string): string {
+    const workspaceDir = pathResolve(process.cwd(), "workspace");
+    const rel = pathRelative(workspaceDir, pathResolve(filePath));
+    if (!rel || rel.startsWith("..") || pathIsAbsolute(rel)) return filePath;
+    return rel.split(pathSep).join("/");
+}
 
 const log = createLogger("message-enricher");
 
@@ -646,17 +660,17 @@ export function formatMessages(
                     imageParts.push({
                         url: `data:${pm.mimeType};base64,${pm.base64Data}`,
                     });
-                    const fileHint = pm.filePath ? ` 文件: ${pm.filePath}` : "";
+                    const fileHint = pm.filePath ? ` 文件: ${toAgentFilePath(pm.filePath)}` : "";
                     textPart = textPart ? `${textPart} [📷 图片${imageParts.length}]${fileHint}` : `[📷 图片${imageParts.length}]${fileHint}`;
                 } else if (pm.filePath && pm.description) {
                     // 有文件路径 + 描述（video/document/animation 或 vision 描述的图片）
                     const mediaText = pm.description.startsWith("[")
-                        ? `${pm.description} 文件: ${pm.filePath}`
-                        : `[📷 图片描述: ${pm.description}] 文件: ${pm.filePath}`;
+                        ? `${pm.description} 文件: ${toAgentFilePath(pm.filePath)}`
+                        : `[📷 图片描述: ${pm.description}] 文件: ${toAgentFilePath(pm.filePath)}`;
                     textPart = textPart ? `${textPart} ${mediaText}` : mediaText;
                 } else if (pm.filePath) {
                     // 仅有文件路径
-                    textPart = textPart ? `${textPart} [📎 文件: ${pm.filePath}]` : `[📎 文件: ${pm.filePath}]`;
+                    textPart = textPart ? `${textPart} [📎 文件: ${toAgentFilePath(pm.filePath)}]` : `[📎 文件: ${toAgentFilePath(pm.filePath)}]`;
                 } else if (pm.description) {
                     // 路径 B/C: 文本描述
                     const mediaText = pm.description.startsWith("[")

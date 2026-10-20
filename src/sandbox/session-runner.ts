@@ -104,7 +104,7 @@ export class SentMessageCollector {
         // 处理重复消息拦截事件
         if (type === "system.duplicate_message_blocked") {
             this.duplicateBlockedCount++;
-            const chatId = String(event.chatId ?? "");
+            const chatId = String(event.targetChatId ?? event.chatId ?? "");
             const text = String(event.text ?? "");
             const preview = text.length > 80 ? text.slice(0, 80) + "..." : text;
             this.duplicateWarningBuffer.push(

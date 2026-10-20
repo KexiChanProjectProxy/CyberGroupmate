@@ -567,6 +567,43 @@ export interface PrivacyConfig {
  * ② serializeConfigToObject 的序列化（写回 yaml）；③ dashboard UI（src/dashboard/ui/src/panels/config/ 下对应的 *Tab.svelte）。
  * 漏掉 ③ 会导致用户在 dashboard 存一次配置就把该字段清空。
  */
+/** remote sandbox 端点（独立 VM 上的 sandboxd） */
+export interface SandboxEndpointConfig {
+    name: string;
+    /** host:port，例如 10.10.0.3:7443 */
+    address: string;
+    /** TLS SNI / 证书校验名（默认取 address 的 host） */
+    servername?: string;
+    /** 本端点最多同时承载的 session 数 */
+    maxSessions?: number;
+}
+
+/** CodeAct sandbox 运行方式 */
+export interface SandboxConfig {
+    /** local：worker + PTY 在本机（开发）；remote：独立 VM 上的隔离容器（生产） */
+    mode: "local" | "remote";
+    /** 遗留开关：worker / PTY 继承宿主完整 process.env（默认 false；remote 模式下忽略） */
+    inheritHostEnv: boolean;
+    /** 允许把 agent 在 sandbox 内编写的 skill 回传到 host 的 workspace/skills（默认 false） */
+    skillsSyncBack: boolean;
+    /** worker 就绪超时（ms） */
+    readyTimeoutMs?: number;
+    /** 协议上限覆盖（见 src/sandbox/protocol/limits.ts） */
+    limits?: Record<string, number>;
+    remote?: {
+        endpoints: SandboxEndpointConfig[];
+        tls: { ca: string; cert: string; key: string };
+        connectTimeoutMs: number;
+        pingIntervalMs: number;
+    };
+}
+
+export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
+    mode: "local",
+    inheritHostEnv: false,
+    skillsSyncBack: false,
+};
+
 export interface AppConfig {
     llmProfiles: Record<string, LLMConfig>;
     llmRouting: LLMRoutingConfig;
@@ -600,6 +637,8 @@ export interface AppConfig {
     emergencyBlock?: EmergencyBlockConfig;
     /** MCP Server 预配置列表（Sandbox 启动时自动连接） */
     mcpServers?: McpServerPreConfig[];
+    /** CodeAct sandbox 运行方式（local / remote） */
+    sandbox: SandboxConfig;
     /** Grounding（联网事实查证）配置 */
     grounding?: GroundingConfig;
     /** LLM 请求限速配置 */
@@ -801,6 +840,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         contextBudget: parsedContextBudget,
         embedding: parseEmbeddingConfig(fileConfig),
         privacy: parsePrivacyConfig(fileConfig),
+        sandbox: parseSandboxConfig(fileConfig),
         subagent: parseSubagentConfig(fileConfig),
         dashboard: parseDashboardConfig(fileConfig),
         vision: parseVisionConfig(fileConfig),
@@ -1240,6 +1280,47 @@ function parseRecordingPipelineConfig(fileConfig: Record<string, unknown>): Reco
 }
 
 // ─── Grounding 配置解析 ───
+
+function parseSandboxConfig(fileConfig: Record<string, unknown>): SandboxConfig {
+    const raw = (fileConfig.sandbox && typeof fileConfig.sandbox === "object")
+        ? fileConfig.sandbox as Record<string, unknown>
+        : {};
+    const mode: SandboxConfig["mode"] = str(raw.mode) === "remote" ? "remote" : "local";
+    const result: SandboxConfig = {
+        mode,
+        inheritHostEnv: raw.inherit_host_env === true,
+        skillsSyncBack: raw.skills_sync_back === true,
+        ...(raw.ready_timeout_ms != null ? { readyTimeoutMs: num(raw.ready_timeout_ms, 30_000) } : {}),
+    };
+    if (raw.limits && typeof raw.limits === "object") {
+        const limits: Record<string, number> = {};
+        for (const [key, value] of Object.entries(raw.limits as Record<string, unknown>)) {
+            const camel = key.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
+            const n = Number(value);
+            if (Number.isFinite(n) && n > 0) limits[camel] = n;
+        }
+        if (Object.keys(limits).length > 0) result.limits = limits;
+    }
+    const remoteRaw = (raw.remote && typeof raw.remote === "object") ? raw.remote as Record<string, unknown> : undefined;
+    if (remoteRaw) {
+        const tlsRaw = (remoteRaw.tls && typeof remoteRaw.tls === "object") ? remoteRaw.tls as Record<string, unknown> : {};
+        const endpoints = Array.isArray(remoteRaw.endpoints) ? remoteRaw.endpoints as Array<Record<string, unknown>> : [];
+        result.remote = {
+            endpoints: endpoints
+                .filter((ep) => ep && typeof ep === "object" && str(ep.address))
+                .map((ep, index) => ({
+                    name: str(ep.name) ?? `sandbox-${index + 1}`,
+                    address: String(ep.address),
+                    ...(str(ep.servername) ? { servername: str(ep.servername) } : {}),
+                    ...(ep.max_sessions != null ? { maxSessions: num(ep.max_sessions, 16) } : {}),
+                })),
+            tls: { ca: str(tlsRaw.ca) ?? "", cert: str(tlsRaw.cert) ?? "", key: str(tlsRaw.key) ?? "" },
+            connectTimeoutMs: num(remoteRaw.connect_timeout_ms, 10_000),
+            pingIntervalMs: num(remoteRaw.ping_interval_ms, 15_000),
+        };
+    }
+    return result;
+}
 
 function parsePrivacyConfig(fileConfig: Record<string, unknown>): PrivacyConfig {
     const raw = (fileConfig.privacy && typeof fileConfig.privacy === "object")
@@ -1878,6 +1959,32 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         enforce: config.privacy?.enforce ?? DEFAULT_PRIVACY.enforce,
     };
 
+    // sandbox（仅在非默认时写出）
+    const sb = config.sandbox;
+    if (sb && (sb.mode !== "local" || sb.inheritHostEnv || sb.skillsSyncBack || sb.remote || sb.limits || sb.readyTimeoutMs != null)) {
+        const sbObj: Record<string, unknown> = { mode: sb.mode };
+        if (sb.inheritHostEnv) sbObj.inherit_host_env = true;
+        if (sb.skillsSyncBack) sbObj.skills_sync_back = true;
+        if (sb.readyTimeoutMs != null) sbObj.ready_timeout_ms = sb.readyTimeoutMs;
+        if (sb.limits) {
+            sbObj.limits = Object.fromEntries(Object.entries(sb.limits).map(([k, v]) => [k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), v]));
+        }
+        if (sb.remote) {
+            sbObj.remote = {
+                endpoints: sb.remote.endpoints.map((ep) => ({
+                    name: ep.name,
+                    address: ep.address,
+                    ...(ep.servername ? { servername: ep.servername } : {}),
+                    ...(ep.maxSessions != null ? { max_sessions: ep.maxSessions } : {}),
+                })),
+                tls: { ca: sb.remote.tls.ca, cert: sb.remote.tls.cert, key: sb.remote.tls.key },
+                connect_timeout_ms: sb.remote.connectTimeoutMs,
+                ping_interval_ms: sb.remote.pingIntervalMs,
+            };
+        }
+        obj.sandbox = sbObj;
+    }
+
     // grounding
     if (config.grounding) {
         const g: Record<string, unknown> = {
@@ -2141,6 +2248,23 @@ export function validateConfig(config: unknown): { valid: boolean; errors: strin
     if (emb) {
         if (emb.provider && emb.provider !== "openai" && emb.provider !== "local") {
             errors.push("embedding.provider 必须是 \"openai\" 或 \"local\"");
+        }
+    }
+
+    // sandbox
+    const sandbox = c.sandbox as SandboxConfig | undefined;
+    if (sandbox?.mode === "remote") {
+        if (!sandbox.remote || sandbox.remote.endpoints.length === 0) {
+            errors.push("sandbox.mode=remote 需要至少一个 sandbox.remote.endpoints");
+        } else {
+            for (const ep of sandbox.remote.endpoints) {
+                if (!/^[^:\s]+:\d{1,5}$/.test(ep.address)) errors.push(`sandbox endpoint "${ep.name}": address 必须是 host:port`);
+            }
+        }
+        for (const key of ["ca", "cert", "key"] as const) {
+            const file = sandbox.remote?.tls?.[key];
+            if (!file) errors.push(`sandbox.remote.tls.${key} 不能为空（mTLS）`);
+            else if (!existsSync(file)) errors.push(`sandbox.remote.tls.${key} 文件不存在: ${file}`);
         }
     }
 

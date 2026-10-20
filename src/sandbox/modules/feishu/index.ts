@@ -289,6 +289,8 @@ export function createFeishuClientProxy(
             ]);
             if (!result || typeof result !== "object") throw new Error("Feishu downloadMedia: invalid envelope");
             const raw = result as Record<string, unknown>;
+            // remote sandbox：大文件由 host 直接写入 sandbox Downloads/，结果只带路径
+            if (raw.savedToSandbox === true && typeof raw.path === "string") return raw.path;
             if (typeof raw.buffer !== "string" || raw.buffer.length > Math.ceil(MAX_DOWNLOAD_BYTES / 3) * 4) {
                 throw new Error("Feishu downloadMedia: missing buffer or download exceeds 100 MiB");
             }

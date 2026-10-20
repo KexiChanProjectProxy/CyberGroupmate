@@ -107,3 +107,31 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=codex
           cache-to: type=gha,mode=max,scope=codex
+
+      - name: Build and push isolated sandbox session image
+        if: github.ref == 'refs/heads/agentic'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.sandbox
+          target: session
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:agentic-sandbox
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
+
+      - name: Build and push sandboxd image
+        if: github.ref == 'refs/heads/agentic'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.sandbox
+          target: sandboxd
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:agentic-sandboxd
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandboxd

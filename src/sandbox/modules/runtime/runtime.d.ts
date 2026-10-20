@@ -51,19 +51,20 @@ declare const runtime: {
      * 与 Dashboard 配置页使用同一份 config.env_vars 存储，修改会实时应用到 host 与 sandbox。
      */
     env: {
-        /** 列出所有受管环境变量 */
-        list(): Promise<Array<{ key: string; value: string; scope: "both" | "host" | "sandbox" }>>;
+        /** 列出 sandbox 可见的受管环境变量（scope 为 sandbox / both；host 作用域不可见） */
+        list(): Promise<Array<{ key: string; value: string; scope: "both" | "sandbox" }>>;
 
-        /** 查询单个环境变量，不存在返回 null */
-        get(key: string): Promise<{ key: string; value: string; scope: "both" | "host" | "sandbox" } | null>;
+        /** 查询单个 sandbox 可见的环境变量，不存在或不可见返回 null */
+        get(key: string): Promise<{ key: string; value: string; scope: "both" | "sandbox" } | null>;
 
         /**
-         * 新增或覆盖环境变量。
-         * @param scope - both(默认)/host/sandbox
+         * 新增或覆盖 sandbox 作用域环境变量（仅对 sandbox 可见）。
+         * 不能覆盖管理员配置的 host / both 变量，也不能与宿主现有环境变量同名。
+         * @param scope - 只接受 "sandbox"（默认）
          */
-        set(key: string, value: string, scope?: "both" | "host" | "sandbox"): Promise<{ ok: true; key: string; value: string; scope: "both" | "host" | "sandbox" }>;
+        set(key: string, value: string, scope?: "sandbox"): Promise<{ ok: true; key: string; value: string; scope: "sandbox" }>;
 
-        /** 删除环境变量（不存在时安全返回） */
+        /** 删除 sandbox 作用域环境变量（不存在时安全返回；不能删除 host / both 变量） */
         delete(key: string): Promise<{ ok: true; deleted: boolean }>;
     };
 

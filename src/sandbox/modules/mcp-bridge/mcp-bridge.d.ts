@@ -7,45 +7,25 @@
 
 declare const mcp: {
     /**
-     * 安装并连接一个 MCP Server。
-    * 根据配置使用 stdio 或 Streamable HTTP 建立连接，自动发现所有 tools。
-    * 连接信息会在宿主进程中全局持久化，所有 sandbox / subagent 共享，
-    * 直到显式调用 disconnect()。
+     * 按名称（重新）连接一个管理员在 config.yaml `mcp_servers` 中预配置的 MCP Server。
+     * 连接参数（command / url / headers 等）一律取自宿主配置；sandbox 不能自定义服务器。
+     * 连接在宿主进程中全局共享，所有 sandbox / subagent 可见。
+     * 已连接的服务器无需再 connect，直接用 mcp.list() / mcp.call()。
      *
-     * @param config - Server 配置
+     * @param config - 预配置的服务器名，或 `{ name }`（其余字段会被忽略）
      * @returns 包含 tools 列表和 call 方法的代理对象
      *
      * @example
-     * // 连接 GitHub MCP Server
-     * const github = await mcp.connect({
-     *   name: "github",
-    *   transport: "streamable-http",
-    *   url: "https://example.com/mcp",
-    *   headers: { Authorization: "Bearer xxx" }
-     * });
+     * const github = await mcp.connect("github");
      * console.log("可用工具:", github.tools);
      *
      * // 调用 tool
      * const repos = await github.call("search_repositories", { query: "mcp typescript" });
      * console.log(repos);
      */
-    connect(config: {
-        /** 显示名称，也用作 tool 命名空间 */
+    connect(config: string | {
+        /** 预配置的服务器名 */
         name: string;
-        /** 服务器用途描述，会展示给主 Agent 的模块名册 */
-        description?: string;
-        /** 传输方式。省略时：有 url 则视为 streamable-http，否则视为 stdio */
-        transport?: "stdio" | "streamable-http";
-        /** stdio 启动命令 */
-        command?: string;
-        /** stdio 命令参数 */
-        args?: string[];
-        /** stdio 环境变量（如 API keys） */
-        env?: Record<string, string>;
-        /** Streamable HTTP endpoint */
-        url?: string;
-        /** Streamable HTTP 附加请求头（如 Authorization） */
-        headers?: Record<string, string>;
     }): Promise<{
         name: string;
         tools: Array<{ name: string; description: string }>;

@@ -74,7 +74,7 @@ shared/todo.d.ts — 不只是代办，可以当你的记事本用。 用于持�
 ## mcp
 mcp-bridge.d.ts — MCP Server 连接器类型定义 连接外部 MCP (Model Context Protocol) Server，自动发现并代理其工具。 支持 stdio 和 Streamable HTTP 两种传输。
 
-- `connect`: 安装并连接一个 MCP Server。 根据配置使用 stdio 或 Streamable HTTP 建立连接，自动发现所有 tools。 连接信息会在宿主进程中全局持久化，所有 sandbox / subagent 共享， 直到显式调用 disconnect()。
+- `connect`: 按名称（重新）连接一个管理员在 config.yaml `mcp_servers` 中预配置的 MCP Server。 连接参数（command / url / headers 等）一律取自宿主配置；sandbox 不能自定义服务器。 连接在宿主进程中全局共享，所有 sandbox / subagent 可见。 已连接的服务器无需再 connect，直接用 mcp.list() / mcp.call()。
 - `disconnect`: 断开全局连接并清理 MCP Server 子进程
 - `list`: 列出所有全局已连接的 MCP Servers 及其工具
 - `call`: 直接调用指定 server 的 tool（无需先调用 connect 返回的代理对象）
@@ -139,10 +139,10 @@ shared/runtime.d.ts — 系统级能力
 - `ps`: 列出后台任务
 - `home`: 返回当前 sandbox 的 home 目录路径（per-chat 隔离）
 - `workspace`: 返回 workspace 根目录路径
-- `env.list`: 列出所有受管环境变量
-- `env.get`: 查询单个环境变量，不存在返回 null
-- `env.set`: 新增或覆盖环境变量。
-- `env.delete`: 删除环境变量（不存在时安全返回）
+- `env.list`: 列出 sandbox 可见的受管环境变量（scope 为 sandbox / both；host 作用域不可见）
+- `env.get`: 查询单个 sandbox 可见的环境变量，不存在或不可见返回 null
+- `env.set`: 新增或覆盖 sandbox 作用域环境变量（仅对 sandbox 可见）。 不能覆盖管理员配置的 host / both 变量，也不能与宿主现有环境变量同名。
+- `env.delete`: 删除 sandbox 作用域环境变量（不存在时安全返回；不能删除 host / both 变量）
 - `remind`: 设置一次性定时提醒（自然语言）。到期后 agent 将被唤醒并收到 description 作为新任务。重复定时提醒请用 cron ⚠️ description 必须是详细的自然语言描述，不是代码。 写清楚：要做什么、给谁发、发什么内容、如何获取信息等。 限制：最短 1 分钟，最长 365 天，每个群最多 10 个活跃提醒。
 - `elevate`: 将当前任务升级给 Meta Agent 处理，并立即入队一次跨群 callback attention。 用于当前 subagent 视角无法完成的跨群/跨人/全局编排任务：例如需要查别的群、协调多个群、让 Meta 重新分派给其他群、或当前群写权限不足。 request 必须写成详细自然语言，说明当前群、已经查到什么、卡在哪里、希望 Meta 做什么。
 - `extendSteps`: 增加当前 CodeAct session 的可用轮次。 仅对当前 session（本轮任务）生效，不会持久化到下次任务。 在本轮代码中调用后，从下一轮开始生效。

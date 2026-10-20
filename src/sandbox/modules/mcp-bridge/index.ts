@@ -750,7 +750,7 @@ function formatSchemaAsType(schema: Record<string, unknown>): string {
 // ─── 公共 API（暴露给 LLM） ───
 
 export const mcpBridge = {
-    connect: async (config: McpServerConfig) => {
+    connect: async (config: McpServerConfig | string) => {
         if (proxyCallbacks) {
             const connected = await proxyCallbacks.callHost("mcp.connect", [config]) as {
                 name: string;
@@ -764,6 +764,9 @@ export const mcpBridge = {
                 call: (toolName: string, args: Record<string, unknown> = {}) =>
                     proxyCallbacks!.callHost("mcp.call", [connected.name, toolName, args]),
             };
+        }
+        if (typeof config === "string") {
+            throw new Error("mcp.connect(name) 仅在 sandbox 中可用；宿主侧请传入完整配置");
         }
         const conn = await connectServer(config);
         return {

@@ -219,6 +219,8 @@ declare const telegram: {
      *
      * ⚠️ **保存到磁盘必须用 `fs.writeFileBinary()`，不能用 `fs.writeFile()`。**
      * `data.buffer` 是 base64 字符串；`fs.writeFile` 会把它当 UTF-8 文本写入导致文件损坏。
+     * 大文件（约 3 MB 以上）在隔离沙盒中会由宿主直接保存：此时 `buffer` 为空、`savedToSandbox` 为 true，
+     * 文件已在 `data.path`，直接使用该路径即可。
      *
      * @example
      * // ✅ 正确：下载并保存为可用的图片文件
@@ -235,7 +237,7 @@ declare const telegram: {
      * // 错误：await telegram.downloadMedia(msg.mediaInfo)
      * // 正确：await telegram.downloadMedia(msg.mediaInfo.fileId, msg.chat.id, msg.id, msg.mediaInfo.uniqueFileId)
      */
-    downloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>;
+    downloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; path?: string; savedToSandbox?: boolean; }>;
     /**
      * mtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。
      *

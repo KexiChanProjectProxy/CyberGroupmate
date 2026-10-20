@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { ensureCompositeId, getGroupModelKey, getPlatform, isValidCompositeChatId } from "../core/chat-id.js";
+import { ensureCompositeId, getGroupModelKey, getPlatform, isValidCompositeChatId, type PlatformName } from "../core/chat-id.js";
+import { buildBannedWordWarning, findBannedWords } from "../core/banned-words.js";
 import {
     assertEgressAllowed,
     isExplicitReadBlocked,
@@ -38,6 +40,30 @@ import { prefixedShortUuid } from "../core/ids.js";
 import { SandboxPool } from "./sandbox-pool.js";
 import { type Sandbox } from "./sandbox.js";
 import { getPendingMessageSignal, SendInterruptedError, type InterruptedSendPayload } from "./send-interrupt.js";
+import { extractSentMessageIds } from "./notify-guard.js";
+import { InboxStore, pushBufferToSandbox, rewriteRemoteFileArgs, type SandboxFileTransport } from "./files/sandbox-files.js";
+import { syncBackSkills } from "./skills/skills-sync.js";
+
+/** remote sandbox 拉取文件的 host 侧 inbox（全进程共享） */
+let sharedInbox: InboxStore | null = null;
+let lastInboxSweep = 0;
+function getInbox(): InboxStore {
+    sharedInbox ??= new InboxStore();
+    if (Date.now() - lastInboxSweep > 10 * 60_000) {
+        lastInboxSweep = Date.now();
+        try { sharedInbox.sweep(); } catch { /* ignore */ }
+    }
+    return sharedInbox;
+}
+
+/** downloadMedia 结果超过该大小时，remote 模式下直接写入 sandbox 而不经 host_call 返回 base64 */
+const REMOTE_INLINE_MEDIA_MAX_BASE64 = 4 * 1024 * 1024;
+
+function asRemoteSandbox(sandbox: unknown): (SandboxFileTransport & { isRemote(): boolean }) | null {
+    const candidate = sandbox as Partial<SandboxFileTransport & { isRemote(): boolean }> | null;
+    if (!candidate || typeof candidate.isRemote !== "function" || !candidate.isRemote()) return null;
+    return candidate as SandboxFileTransport & { isRemote(): boolean };
+}
 
 const log = createLogger("sandbox-host-calls");
 
@@ -101,6 +127,10 @@ function normalizeEnvVars(envVars?: EnvironmentVariable[]): EnvironmentVariable[
 
 function isValidEnvKey(key: string): boolean {
     return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
+}
+
+function isSandboxVisibleEnvVar(ev: EnvironmentVariable): boolean {
+    return ev.scope === "sandbox" || ev.scope === "both" || ev.scope === undefined;
 }
 
 function isBoundChatWriteRestrictionEnabled(): boolean {
@@ -554,12 +584,49 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
         }
     };
 
+    /** remote：大文件不经 host_call_result 回传 base64（会撑爆帧），直接写入 sandbox Downloads/ */
+    const deliverLargeMediaToSandbox = async (
+        remote: SandboxFileTransport,
+        platform: string,
+        result: unknown,
+    ): Promise<unknown> => {
+        if (!result || typeof result !== "object") return result;
+        const rec = result as Record<string, unknown>;
+        if (typeof rec.buffer !== "string" || rec.buffer.length <= REMOTE_INLINE_MEDIA_MAX_BASE64) return result;
+        const data = Buffer.from(rec.buffer, "base64");
+        const digest = createHash("sha256").update(data).digest("hex").slice(0, 16);
+        const fileName = typeof rec.fileName === "string" ? rec.fileName.replace(/[^A-Za-z0-9._-]/g, "_").slice(-60) : "";
+        const rel = `Downloads/${platform}/${digest}${fileName ? `-${fileName}` : ""}`;
+        const path = await pushBufferToSandbox(remote, data, rel);
+        return { ...rec, buffer: "", size: data.length, path, savedToSandbox: true };
+    };
+
+    /** 成功的写操作为本 sandbox 授予 agent_message_sent 凭证（见 notify-guard.ts） */
+    const grantSendCredits = (platform: string, target: unknown, result: unknown): void => {
+        const ledger = (sandbox as Partial<Pick<Sandbox, "sendLedger">>).sendLedger;
+        if (!ledger) return;
+        let compositeTarget: string;
+        try {
+            compositeTarget = ensureCompositeId(platform as PlatformName, String(target));
+        } catch {
+            return;
+        }
+        for (const messageId of extractSentMessageIds(result)) {
+            ledger.grant(compositeTarget, messageId);
+        }
+    };
+
     return async (method: string, args: unknown[]) => {
         // 每次 host 调用最多构建一次 visibility 兜底上下文（懒加载，仅隐私相关分支会触发）。
         let _policy: PolicyContext | undefined;
         const policy = (): PolicyContext => (_policy ??= buildPolicyContext(chatId, memory));
 
         const adapter = adapters.find((item) => item.canHandle(method));
+        const remoteSandbox = asRemoteSandbox(sandbox);
+        if (adapter && remoteSandbox) {
+            // remote：sandbox 文件 → host inbox；宿主文件 / 内网 URL → 拒绝
+            args = await rewriteRemoteFileArgs(args, remoteSandbox, getInbox());
+        }
         if (adapter) {
             if (adapter.platform === "feishu") {
                 const target = getFeishuReadTarget(method, args);
@@ -597,8 +664,24 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                     );
                 }
             }
+            // 禁用词：worker 侧检查在 RCE 下可被绕过，host 侧再查一次（覆盖 getSendIntent 识别的发送方法）。
+            const bannedWords = loadConfig().subagent?.bannedWords ?? [];
+            if (bannedWords.length > 0) {
+                const intent = getSendIntent(adapter.platform, method, args);
+                const found = intent ? findBannedWords(intent.text, bannedWords) : [];
+                if (found.length > 0) {
+                    throw new Error(buildBannedWordWarning(found, intent!.text));
+                }
+            }
             await applyInterruptibleHumanizedDelay(adapter, method, args);
-            return adapter.handleCall(method, args);
+            let result = await adapter.handleCall(method, args);
+            if (writeTarget != null && !isSelfTarget(writeTarget)) {
+                grantSendCredits(adapter.platform, writeTarget, result);
+            }
+            if (remoteSandbox && method.endsWith(".downloadMedia")) {
+                result = await deliverLargeMediaToSandbox(remoteSandbox, adapter.platform, result);
+            }
+            return result;
         }
 
         switch (method) {
@@ -617,7 +700,7 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                     (args[1] as { tabId?: string; idleTimeout?: number; maxDuration?: number }) ?? undefined,
                 );
             case "shell.sendInput":
-                sandbox.sendShellInput(String(args[0]), args[1] != null ? String(args[1]) : undefined);
+                await sandbox.sendShellInput(String(args[0]), args[1] != null ? String(args[1]) : undefined);
                 return;
             case "shell.kill":
                 return sandbox.killShellTab(args[0] != null ? String(args[0]) : undefined);
@@ -728,9 +811,12 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return { ok: true, id, enqueuedAt };
         }
 
+        // runtime.env.*：sandbox 只能看到 / 修改 scope=sandbox|both 中对 sandbox 可见的条目，
+        // 且只能写入 scope=sandbox。host / both 作用域的变量会进入宿主进程 env
+        // （NODE_OPTIONS、HTTPS_PROXY、MCP header 插值……），只允许管理员通过 Dashboard / config.yaml 修改。
         if (method === "runtime.env.list") {
             const cfg = loadConfig("config.yaml", true);
-            return normalizeEnvVars(cfg.envVars);
+            return normalizeEnvVars(cfg.envVars).filter(isSandboxVisibleEnvVar);
         }
         if (method === "runtime.env.get") {
             const key = String(args[0] ?? "").trim();
@@ -738,21 +824,34 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             const cfg = loadConfig("config.yaml", true);
             const list = normalizeEnvVars(cfg.envVars);
             const found = list.find((ev) => ev.key === key);
-            return found ?? null;
+            return found && isSandboxVisibleEnvVar(found) ? found : null;
         }
         if (method === "runtime.env.set") {
             const key = String(args[0] ?? "").trim();
             const value = String(args[1] ?? "");
-            const scopeRaw = String(args[2] ?? "both").trim().toLowerCase();
-            const scope = (scopeRaw === "host" || scopeRaw === "sandbox" || scopeRaw === "both")
-                ? scopeRaw as EnvironmentVariable["scope"]
-                : "both";
+            const scopeRaw = String(args[2] ?? "sandbox").trim().toLowerCase();
+            if (scopeRaw !== "sandbox") {
+                throw new Error(
+                    `[Sandbox 安全限制] runtime.env.set 只能写入 scope="sandbox"（请求 scope="${scopeRaw.slice(0, 20)}"）。` +
+                    "host / both 作用域请让管理员在 Dashboard 配置。",
+                );
+            }
+            const scope: EnvironmentVariable["scope"] = "sandbox";
             if (!isValidEnvKey(key)) {
                 throw new Error(`非法 env key: ${key}`);
             }
 
             const cfg = loadConfig("config.yaml", true);
             const list = normalizeEnvVars(cfg.envVars);
+            const existing = list.find((ev) => ev.key === key);
+            if (existing && existing.scope !== "sandbox") {
+                throw new Error(`[Sandbox 安全限制] ${key} 是管理员配置的 ${existing.scope ?? "both"} 作用域变量，sandbox 不能覆盖`);
+            }
+            // 受管 key 若不在 host 可见集合中，applyHostManagedEnv 会把它从宿主 process.env 删除；
+            // 因此不允许 sandbox 新建与宿主现有环境变量同名的 key（否则可借此清除 PATH / API key 等）。
+            if (!existing && process.env[key] !== undefined) {
+                throw new Error(`[Sandbox 安全限制] ${key} 与宿主进程现有环境变量同名，sandbox 不能创建`);
+            }
             const nextList = list.filter((ev) => ev.key !== key);
             nextList.push({ key, value, scope });
             cfg.envVars = nextList.length > 0 ? nextList : undefined;
@@ -778,7 +877,11 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             if (!key) return { ok: true, deleted: false };
             const cfg = loadConfig("config.yaml", true);
             const list = normalizeEnvVars(cfg.envVars);
-            const had = list.some((ev) => ev.key === key);
+            const existing = list.find((ev) => ev.key === key);
+            if (existing && existing.scope !== "sandbox") {
+                throw new Error(`[Sandbox 安全限制] ${key} 是管理员配置的 ${existing.scope ?? "both"} 作用域变量，sandbox 不能删除`);
+            }
+            const had = !!existing;
             const nextList = list.filter((ev) => ev.key !== key);
             cfg.envVars = nextList.length > 0 ? nextList : undefined;
 
@@ -827,6 +930,14 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             }
             if (!imagePaths || imagePaths.length === 0) {
                 throw new Error("vision.see() 至少需要传入一个图片路径");
+            }
+            if (remoteSandbox) {
+                const inbox = getInbox();
+                const rewritten = await rewriteRemoteFileArgs(imagePaths.map(String), remoteSandbox, inbox);
+                imagePaths = rewritten.map((p, i) => {
+                    if (typeof p !== "string" || !inbox.contains(p)) throw new Error(`文件不存在: ${String(imagePaths[i])}`);
+                    return p;
+                });
             }
             const workspaceRoot = resolve("workspace");
             const visionConfigs = resolveComponentProfiles("vision");
@@ -1161,12 +1272,68 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return { userId: target, blocked: true, alreadyBlocked: !newlyBlocked, notified };
         }
 
+        if (method === "skills.syncBack") {
+            const remote = asRemoteSandbox(sandbox) as (SandboxFileTransport & { listFiles(path: string): Promise<string[]> }) | null;
+            if (!remote || loadConfig().sandbox?.skillsSyncBack !== true) {
+                throw new Error("[Sandbox 安全限制] skills 回传未启用（sandbox.skills_sync_back）");
+            }
+            const ids = Array.isArray(args[0]) ? (args[0] as unknown[]).map(String).slice(0, 50) : [];
+            const skillsDir = resolve("workspace", "skills");
+            const report = await syncBackSkills({
+                list: (skillId) => remote.listFiles(`skills/${skillId}`),
+                read: async (skillId, rel, maxBytes) => {
+                    const parts: Buffer[] = [];
+                    let offset = 0;
+                    for (;;) {
+                        const chunk = await remote.readFileChunk(`skills/${skillId}/${rel}`, offset, maxBytes + 1);
+                        if (chunk.size > maxBytes) throw new Error("file too large");
+                        parts.push(chunk.data);
+                        offset += chunk.data.length;
+                        if (chunk.eof || chunk.data.length === 0) break;
+                    }
+                    return Buffer.concat(parts);
+                },
+            }, skillsDir, ids);
+            if (report.synced.length > 0) {
+                const { refreshModuleRegistryCache } = await import("../subagent/code-act-executor.js");
+                refreshModuleRegistryCache();
+                sandboxPool.invalidateSkills();
+            }
+            log.info("skills.syncBack", { chatId, synced: report.synced, rejected: report.rejected.length });
+            return report;
+        }
+
         if (method === "mcp.list") {
             return mcpBridge.list();
         }
         if (method === "mcp.connect") {
-            const [config] = args;
-            const server = await mcpBridge.connect(config);
+            // sandbox 只能按名称（重新）连接 config.yaml 中预配置的 server：
+            // 若允许 sandbox 自带 command / url / headers，等同于在 host 上执行任意命令，
+            // 或让 host 把 ${VAR} 插值后的密钥发往任意 URL。
+            const requested = args[0];
+            const name = typeof requested === "string"
+                ? requested.trim()
+                : requested && typeof requested === "object"
+                    ? String((requested as { name?: unknown }).name ?? "").trim()
+                    : "";
+            const presets = loadConfig("config.yaml", true).mcpServers ?? [];
+            const preset = presets.find((server) => server.name === name);
+            if (!preset) {
+                const available = presets.map((server) => server.name).join(", ") || "（无）";
+                throw new Error(
+                    `[Sandbox 安全限制] mcp.connect 只能按名称连接 config.yaml mcp_servers 中预配置的服务器。` +
+                    `请求: "${name.slice(0, 80)}"；可用: ${available}`,
+                );
+            }
+            const server = await mcpBridge.connect({
+                name: preset.name,
+                transport: preset.transport,
+                command: preset.command,
+                args: preset.args,
+                env: preset.env,
+                url: preset.url,
+                headers: preset.headers,
+            });
             return { name: server.name, tools: server.tools };
         }
         if (method === "mcp.disconnect") {

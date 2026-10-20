@@ -1,0 +1,9 @@
+[Unit]
+Description=CyberGroupmate sandbox per-home disk quota
+After=var-lib-cgm.mount
+Requires=var-lib-cgm.mount
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/cgm/vm.env
+ExecStart=/opt/cgm/scripts/sandbox-vm/homes-quota.sh

@@ -130,7 +130,15 @@ interface HostCallMessage {
     args: unknown[];
 }
 
-type IncomingMessage = ExecuteMessage | ResetScopeMessage | InputResponseMessage | HostCallResultMessage;
+/** Supervisor → Worker: 环境变量热更新 */
+interface EnvPatchMessage {
+    type: "env_patch";
+    id: string;
+    set?: Record<string, string>;
+    unset?: string[];
+}
+
+type IncomingMessage = ExecuteMessage | ResetScopeMessage | InputResponseMessage | HostCallResultMessage | EnvPatchMessage;
 type OutgoingMessage = ResultMessage | NotifyMessage | InputRequestMessage | PrintMessage | HostCallMessage;
 
 // ─── Task-scoped notebook state ───
@@ -731,6 +739,10 @@ rl.on("line", async (line: string) => {
                 output: "",
                 error: false,
             });
+        } else if (msg.type === "env_patch") {
+            for (const [k, v] of Object.entries(msg.set ?? {})) process.env[k] = String(v);
+            for (const k of msg.unset ?? []) delete process.env[k];
+            sendToHost({ type: "result", id: msg.id, output: "", error: false });
         } else if (msg.type === "input_response") {
             // 用户输入响应 — 唤醒等待中的 runtime.input()
             const resolver = pendingInputs.get(msg.id);
@@ -784,6 +796,14 @@ async function initWorker(): Promise<void> {
         listSkills: () => getSkillListEntries(loadedSkills),
         reloadSkills: async () => {
             loadedSkills = await reloadAllSkills();
+            // remote + skills_sync_back：把本 session 编写的 skill 源码回传 host（host 侧按白名单校验）
+            if (process.env.SANDBOX_SKILLS_SYNC_BACK === "1" && loadedSkills.length > 0) {
+                try {
+                    await callHost("skills.syncBack", [loadedSkills.map((skill) => skill.path.replace(/^skills\//, ""))]);
+                } catch (err) {
+                    printToHost(`[skills] 回传 host 失败: ${err instanceof Error ? err.message : String(err)}`);
+                }
+            }
             return getSkillListEntries(loadedSkills);
         },
         npmInstall: async (packages: string[]) => installDepsRuntime(packages),

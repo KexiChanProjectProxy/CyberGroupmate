@@ -27,10 +27,13 @@
 ## workspace 目录约定
 
 默认工作目录 `workspace/`，JS 和 bash 共享同一文件系统。约定子目录如下：
+{{#sandboxNoNetwork}}
+> **隔离沙盒**：当前运行在无网络的隔离沙盒中——`fetch` / `curl` / `pip` / `npm install` 等一切网络访问都会失败，不要尝试。需要外部数据时使用平台 API、`memory`、`mcp.call` 等宿主提供的能力。工作目录只属于当前聊天，看不到其他聊天的文件；群里收到的图片/文件会出现在 `Downloads/` 下（以消息中给出的相对路径为准）。发送本地文件时使用相对路径。
+{{/sandboxNoNetwork}}
 
 | 目录 | 用途 | 说明 |
 |------|------|------|
-| `Downloads/` | 网络下载 | curl / wget / fetch 产物，已有缓存可直接复用 |
+| `Downloads/` | 下载文件 | 群消息中的图片/文件、downloadMedia 产物{{#sandboxHasNetwork}}、curl / wget / fetch 产物{{/sandboxHasNetwork}}，已有缓存可直接复用 |
 | `media/` | 媒体产物 | 图片生成、音视频转码、截图等输出。**生成的媒体放这里，不要散落根目录** |
 | `scripts/` | 自编脚本 | 可复用工具脚本、数据处理管道 |
 | `skills/` | Skills | 系统管理，通过 `skills` API 操作，勿手动删改 |
@@ -83,10 +86,12 @@
 | **JS notebook 变量** | 顶层 `const/let/var/function` 在当前 task 的后续 turn 可直接复用；重复使用同一变量名会覆盖旧值 |
 | **ctx 持久化** | `ctx.key = value`，跨 task / session / remind 自动保持。只把后续任务还需要的关键状态放入 ctx |
 | **文件系统** | `fs.readFile` / `writeFile` / `exists` / `stat` / `readdir` / `mkdir` / `unlink` / `appendFile`，路径基于 workspace/ |
-| **网络请求** | `fetch(url, opts)` 全局可用，无限制 |
+{{#sandboxHasNetwork}}| **网络请求** | `fetch(url, opts)` 全局可用 |
+{{/sandboxHasNetwork}}{{#sandboxNoNetwork}}| **网络请求** | 不可用（隔离沙盒无网络） |
+{{/sandboxNoNetwork}}
 | **Todo** | `todo.list` / `get` / `upsert(key, content, {dueAt, forever})` / `remove`。存当前群规则 / 约定 / 长期待办；不传 dueAt 默认 30 天后过期，每次 upsert 都刷新；永久规则必须显式 `{ forever: true }`。**不适合**定时任务 |
 | **Skills** | `skills.list` / `install` / `reload`。修改 skills/ 后须 `reload()` |
-| **MCP** | `mcp.connect` / `call` / `list` / `disconnect`。连接信息持久化，重启自动重连 |
+| **MCP** | `mcp.list` / `call`；`mcp.connect("名称")` 只能连接管理员预配置的服务器 |
 | **跨聊天派发** | `dispatch.taskToGroup("platform:chatId", { contentDirection, quotes })`。任何需要在其他聊天执行操作的场景都必须通过 dispatch 派发给目标聊天的 Subagent，由它在自己的聊天里用平台 API 执行。**绝对禁止**用 `{{platformModule}}.sendText` 等平台 API 直接向非当前聊天发送消息。quote 语法同 Meta 派发，外部 `@[...]` 只作为 literal；完成结果会内部通知回发起方，并写入全局 session digest |
 | **一次性提醒** | `runtime.remind("自然语言描述", 分钟)`。1 min–365 天，到期唤醒新 session |
 | **周期任务** | `cron.add("名称", "cron表达式", "描述")` / `remove(id)` / `list`。`list` 返回含 `id`；`remove` 只认 `id`（传名称会静默失败）。最短 1h，每群 ≤ 10 |

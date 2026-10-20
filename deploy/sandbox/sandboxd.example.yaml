@@ -1,0 +1,35 @@
+# sandboxd 配置示例（放在 sandbox VM 的 /etc/cgm/sandboxd.yaml）
+# 参见 docs/sandbox-remote.md
+
+listen:
+  host: 0.0.0.0        # 由 VPC 防火墙 + VM iptables 限制为仅 host VM 可达
+  port: 7443
+
+tls:
+  ca: /etc/cgm/tls/ca.crt
+  cert: /etc/cgm/tls/server.crt
+  key: /etc/cgm/tls/server.key
+  # 每行一个客户端证书 SHA-256 指纹；编辑后 `systemctl kill -s HUP cgm-sandboxd` 生效（吊销无需 CRL）
+  allowed_clients_file: /etc/cgm/tls/allowed-clients
+
+data_dir: /var/lib/cgm   # 独立 PD：homes/（每 chat 一个）+ skills/（按 generation，只读挂载给容器）
+
+launcher: docker
+docker:
+  bin: docker
+  image: ghcr.io/archeb/cybergroupmate:agentic-sandbox
+  runtime: runsc         # gVisor；daemon.json 中需注册 runsc
+  user: "1000:1000"
+  memory: 2g
+  cpus: "2"
+  pids_limit: 512
+  tmpfs_size: 512m
+  nofile: 4096
+  extra_args: []
+
+max_sessions: 32               # 需 ≥ host 的 subagent.max_sandbox_instances
+host_idle_kill_ms: 60000       # host 每 15s ping；60s 无字节即视为 host 已死，回收 session
+session_max_lifetime_ms: 172800000   # 48h（> shell.runBackground 24h 上限）
+home_ttl_days: 30
+keep_skill_generations: 3
+max_skills_bytes: 1073741824

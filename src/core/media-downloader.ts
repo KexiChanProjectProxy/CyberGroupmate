@@ -131,6 +131,7 @@ export class MediaDownloader {
     /** uniqueFileId → sticker content SHA256 索引 (内存) */
     private readonly stickerAliasContentHashes = new Map<string, string>();
     private readonly indexedStickerPaths = new Set<string>();
+    private readonly savedListeners: Array<(info: MediaFileInfo & { chatId?: string }) => void> = [];
 
     constructor(config?: MediaDownloaderConfig) {
         // 始终 resolve 为绝对路径，确保从任意 cwd 都能正确访问
@@ -183,6 +184,37 @@ export class MediaDownloader {
      * @returns 保存信息 (路径、大小等)，或 null 如果超出大小限制
      */
     saveMedia(buffer: Buffer, opts: MediaSaveOptions): MediaFileInfo | null {
+        const info = this.saveMediaInternal(buffer, opts);
+        if (info && this.savedListeners.length > 0) {
+            for (const listener of this.savedListeners) {
+                try {
+                    listener({ ...info, chatId: opts.chatId });
+                } catch (err) {
+                    log.warn("saveMedia: onSaved 回调异常", { error: String(err) });
+                }
+            }
+        }
+        return info;
+    }
+
+    /**
+     * 注册保存成功回调（remote sandbox 据此把入站媒体推送到对应 chat 的 sandbox）
+     * @returns 取消注册的函数
+     */
+    onSaved(listener: (info: MediaFileInfo & { chatId?: string }) => void): () => void {
+        this.savedListeners.push(listener);
+        return () => {
+            const idx = this.savedListeners.indexOf(listener);
+            if (idx >= 0) this.savedListeners.splice(idx, 1);
+        };
+    }
+
+    /** 下载根目录（绝对路径） */
+    getDownloadDir(): string {
+        return this.downloadDir;
+    }
+
+    private saveMediaInternal(buffer: Buffer, opts: MediaSaveOptions): MediaFileInfo | null {
         // 大小检查
         if (buffer.length > this.maxFileSize) {
             log.debug("saveMedia: 超出大小限制", {
