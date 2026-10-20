@@ -2,6 +2,17 @@
   export let config;
   export let pwFocus;
   export let pwBlur;
+
+  $: if (config.dashboard && !config.dashboard.cloudflareAccess) {
+    config.dashboard.cloudflareAccess = { teamDomain: "", aud: "", allowedEmails: [] };
+  }
+  $: cfaEmails = (config.dashboard?.cloudflareAccess?.allowedEmails ?? []).join(", ");
+  function setCfaEmails(e) {
+    config.dashboard.cloudflareAccess.allowedEmails = e.currentTarget.value
+      .split(/[,\s]+/)
+      .map((v) => v.trim())
+      .filter(Boolean);
+  }
 </script>
 
 <h3 class="card-title text-sm">
@@ -50,3 +61,36 @@
     on:blur={pwBlur}
   /></label
 >
+
+<h4 class="text-xs font-semibold mt-4 mb-1">Cloudflare Access</h4>
+<p class="text-xs opacity-50 mb-2">
+  经 Cloudflare Tunnel 发布并由 Access 保护时填写：携带有效 Access JWT 的请求无需 token。留空则不启用。
+</p>
+<div class="cfg-grid-3">
+  <label class="cfg-field"
+    ><span class="cfg-label">Team 域名</span>
+    <input
+      type="text"
+      class="input input-xs input-bordered w-full"
+      bind:value={config.dashboard.cloudflareAccess.teamDomain}
+      placeholder="yourteam.cloudflareaccess.com"
+    /></label
+  >
+  <label class="cfg-field"
+    ><span class="cfg-label">Application AUD</span>
+    <input
+      type="text"
+      class="input input-xs input-bordered w-full"
+      bind:value={config.dashboard.cloudflareAccess.aud}
+    /></label
+  >
+  <label class="cfg-field"
+    ><span class="cfg-label">允许的邮箱（逗号分隔，可选）</span>
+    <input
+      type="text"
+      class="input input-xs input-bordered w-full"
+      value={cfaEmails}
+      on:change={setCfaEmails}
+    /></label
+  >
+</div>
