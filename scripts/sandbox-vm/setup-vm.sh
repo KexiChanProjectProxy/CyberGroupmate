@@ -4,11 +4,13 @@
 # 安装：docker-ce、gVisor runsc、daemon.json、systemd 单元、脚本、sysctl；homes PD 首次启动时格式化。
 # 之后由 build-image.sh 制作 golden image —— 生产 sandbox VM 无出口，不能在运行时 apt / docker pull。
 #
-# 用法（在 builder VM 上，以 root）：REPO_DIR=/opt/cgm ./setup-vm.sh <sandbox-image.tar.zst> <sandboxd-image.tar.zst>
+# 用法（在 builder VM 上，以 root）：
+#   REPO_DIR=/opt/cgm ./setup-vm.sh <sandbox-image.tar.zst> <sandboxd-image.tar.zst>
+#   REPO_DIR=/opt/cgm ./setup-vm.sh --build      # 从 REPO_DIR 中的完整源码构建镜像
 set -euo pipefail
 
-SESSION_TAR="${1:?session image tarball}"
-SANDBOXD_TAR="${2:?sandboxd image tarball}"
+SESSION_TAR="${1:?session image tarball or --build}"
+SANDBOXD_TAR="${2:-}"
 REPO_DIR="${REPO_DIR:-/opt/cgm}"
 
 export DEBIAN_FRONTEND=noninteractive
@@ -31,8 +33,14 @@ install -m 0644 "$REPO_DIR/deploy/sandbox/daemon.json" /etc/docker/daemon.json
 systemctl restart docker
 docker info --format '{{json .Runtimes}}' | grep -q runsc
 
-zstd -dc "$SESSION_TAR" | docker load
-zstd -dc "$SANDBOXD_TAR" | docker load
+if [ "$SESSION_TAR" = "--build" ]; then
+  docker build -f "$REPO_DIR/Dockerfile.sandbox" --target session -t ghcr.io/archeb/cybergroupmate:agentic-sandbox "$REPO_DIR"
+  docker build -f "$REPO_DIR/Dockerfile.sandbox" --target sandboxd -t ghcr.io/archeb/cybergroupmate:agentic-sandboxd "$REPO_DIR"
+  docker builder prune -af >/dev/null 2>&1 || true
+else
+  zstd -dc "$SESSION_TAR" | docker load
+  zstd -dc "${SANDBOXD_TAR:?sandboxd image tarball}" | docker load
+fi
 
 # systemd 单元 + 脚本
 install -d -m 0755 /opt/cgm/scripts/sandbox-vm /etc/cgm
