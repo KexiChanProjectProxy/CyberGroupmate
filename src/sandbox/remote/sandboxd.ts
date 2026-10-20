@@ -301,7 +301,11 @@ export class Sandboxd {
             clearTimeout(lifetimeTimer);
             this.sessions.delete(sessionId);
             launched.kill();
-            socket.destroy();
+            // 先 end() 让已排队的数据（如 worker_exit 帧）发完，再兜底 destroy
+            if (!socket.destroyed) {
+                socket.end();
+                setTimeout(() => socket.destroy(), 2000).unref();
+            }
             log.info("session 结束", { sessionId, chatKey: chatKey.slice(0, 8), reason, durationMs: Date.now() - session.startedAt });
         };
         const idleTimer = setInterval(() => {

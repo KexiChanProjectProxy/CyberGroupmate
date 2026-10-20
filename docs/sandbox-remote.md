@@ -40,7 +40,7 @@ HOST VM（有受控出口：LLM / Telegram 白名单）            SANDBOX VM（
 | `runtime.notify({type:"nc.message", chatId:<任意群>, userId:<任意人>})` 伪造入站消息 / 写入记忆 | notify 过滤：保留类型改写为 `sandbox.notify`、chatId 固定为绑定 chat；`agent_message_sent` 必须对应 host 刚替该 sandbox 完成的真实发送 |
 | 伪造 `extendSteps: 1e9` / 超长行 / 原型污染 / 洪泛 | 帧 zod 校验 + 钳制；单行 4 MiB；丢弃 `__proto__`/`constructor`/`prototype`；事件令牌桶；并发 host_call ≤ 8；违规直接终止 session |
 | 读其他聊天的文件 / 进程 | 每 session 一个容器、每 chat 一个 home（0700）；容器间不共享 /proc、/tmp、网络命名空间 |
-| fork bomb / 吃满内存 / 写满磁盘 | `--pids-limit` / `--memory`（无 swap）/ `--cpus`；ext4 project quota 限制每个 home；`/tmp` 为 512 MiB tmpfs |
+| fork bomb / 吃满内存 / 写满磁盘 | `--pids-limit` / `--memory`（无 swap）/ `--cpus`；ext4 project quota 限制每个 home；`/tmp` 为 512 MiB tmpfs。fork bomb 会耗尽**本 session** 的 pids 上限导致该容器退出（host 视为会话结束，下次使用时重建），其他 session 与 sandboxd 不受影响 |
 | 内核 0-day 逃逸 | gVisor（runsc）作为用户态内核；即便逃逸到 VM：无凭据（仅 sandboxd 的服务端私钥）、无出口、无 SA |
 | host 宕机后 session 残留 | host 每 15s ping，sandboxd 60s 无字节即回收；session 绝对寿命 48h；sandboxd 启动时清理孤儿容器 |
 
@@ -117,6 +117,19 @@ sandbox:
 - **清理**：home 30 天未使用自动删除；skills 保留最近 3 个 generation；host inbox 文件 1 小时后清理。
 
 ## 6. 验收清单（以攻击者视角在 sandbox 中执行）
+
+自动化验收脚本（在 host VM 上运行，覆盖下列全部条目，并验证 fork 炸弹隔离、跨会话隔离与会话回收）：
+
+```bash
+SANDBOX_ENDPOINT=10.10.0.3:7443 SANDBOX_SERVERNAME=cgm-sandbox-1 SANDBOX_TLS_DIR=/run/cgm-tls \
+QUOTA_MIB=5120 npx tsx scripts/sandbox-vm/acceptance.ts
+```
+
+> 已在真实环境验证（2026-10-20，arm64 Armbian + docker 29 + gVisor release-20261012，按本文 systemd / iptables /
+> project quota 部署，host 经 mTLS 跨机连接）：21/21 通过。注意 gVisor 下配额耗尽时 `dd` 不一定打印
+> `Disk quota exceeded`，以实际写入大小为准。新版 gVisor 手动安装时需把发布包中的 `gvisor-bin/` 放在 `runsc` 同目录（apt 包会自动处理）。
+
+手动检查项：
 
 - `env`、`cat /proc/1/environ`：无任何凭据。
 - `curl`、`python3 -c 'import urllib.request; urllib.request.urlopen("http://example.com")'`、`node -e 'fetch("http://169.254.169.254")'`：立即失败。

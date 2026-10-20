@@ -326,6 +326,8 @@ export class Sandbox extends EventEmitter {
             const socket = session.socket;
             this.remoteHome = session.home;
             this.attachTransport(socket, socket, () => socket.destroy());
+            // 立即开始心跳：sandboxd 按"host 多久没发字节"回收会话，冷启动期间也必须保持活跃
+            this.startPing();
             socket.on("error", (err) => {
                 log.warn("sandbox 远程连接错误", { chatId: this.chatId, error: String(err) });
                 if (this.listenerCount("error") > 0) this.emit("error", err);
@@ -361,11 +363,15 @@ export class Sandbox extends EventEmitter {
             throw err;
         }
 
-        if (this.isRemote()) {
-            const interval = this.runtime.remote?.pingIntervalMs ?? 15_000;
-            this.pingTimer = setInterval(() => this.writeFrame({ type: "ping", id: `ping_${++this.requestCounter}` }), interval);
-            this.pingTimer.unref?.();
-        }
+    }
+
+    private startPing(): void {
+        if (this.pingTimer) clearInterval(this.pingTimer);
+        const interval = this.runtime.remote?.pingIntervalMs ?? 15_000;
+        const ping = () => this.writeFrame({ type: "ping", id: `ping_${++this.requestCounter}` });
+        ping();
+        this.pingTimer = setInterval(ping, interval);
+        this.pingTimer.unref?.();
     }
 
     private attachTransport(input: Readable, output: Writable, close: () => void): void {

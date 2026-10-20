@@ -260,6 +260,8 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
 
         it("#6c.1 pending sticker messages use cached descriptions", async () => {
             const executor = new CodeActExecutor("chat1");
+            // 缓存描述只在 vision_cache 模式下使用（默认 emoji_only 只展示 emoji）
+            (executor as any).visionConfig = { stickerMode: "vision_cache" };
             (executor as any).memory = {
                 getStickerDescription: (uniqueFileId: string) => uniqueFileId === "sticker-known"
                     ? { description: "比心示好的温柔贴纸", emojis: ["🫶"] }
