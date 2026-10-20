@@ -31,6 +31,7 @@ import { EventEmitter } from "node:events";
 import { callOpenAI } from "./llm/openai.js";
 import { callOpenAIResponses } from "./llm/openai-responses.js";
 import { callAnthropic } from "./llm/anthropic.js";
+import { clientIdentityHeaders } from "./llm/client-identity.js";
 import { callGoogle } from "./llm/google.js";
 
 const log = createLogger("llm");
@@ -166,7 +167,7 @@ export interface LLMCallOptions {
     contextManifest?: ContextManifest;
     /** 外部取消信号。用于上层在新消息到达时中断本次推理并重建 prompt。 */
     abortSignal?: AbortSignal;
-    /** 多轮会话的稳定 id；profile 配置了 sessionHeader 时作为该请求头的值发送 */
+    /** 多轮会话的稳定 id；profile 配置了 clientIdentity 时，同一 sessionId 映射为同一个会话标识头 */
     sessionId?: string;
     /**
      * 禁用「fallback 到不支持 vision 的 profile 时把图片降级为文字」。
@@ -528,6 +529,11 @@ async function _callLLMSingleKeyInner(
     const timeoutMs = options?.timeoutMs ?? 60_000;
     const maxRetries = options?.maxRetries ?? MAX_RETRIES;
 
+    // 客户端身份头（User-Agent / 会话标识）：每次调用算一次，重试沿用同一会话 id；profile 自己的 customHeaders 优先
+    const requestConfig: LLMConfig = config.clientIdentity
+        ? { ...config, customHeaders: { ...clientIdentityHeaders(config.clientIdentity, options?.sessionId), ...(config.customHeaders ?? {}) } }
+        : config;
+
     // 创建主 AbortController 用于 Dashboard 取消
     let currentController = new AbortController();
     _activeControllers.set(callId, currentController);
@@ -555,11 +561,6 @@ async function _callLLMSingleKeyInner(
             const combinedSignals = [timeoutSignal, currentController.signal];
             if (options?.abortSignal) combinedSignals.push(options.abortSignal);
             const combinedSignal = AbortSignal.any(combinedSignals);
-
-            // 会话标识请求头：仅当 profile 配置了 sessionHeader 且调用方提供了 sessionId
-            const requestConfig: LLMConfig = config.sessionHeader && options?.sessionId
-                ? { ...config, customHeaders: { ...(config.customHeaders ?? {}), [config.sessionHeader]: options.sessionId } }
-                : config;
 
             // ── Provider dispatch ──
             let result: LLMResponse;

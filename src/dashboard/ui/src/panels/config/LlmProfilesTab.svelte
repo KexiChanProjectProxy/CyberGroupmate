@@ -237,18 +237,17 @@
           {#if p._customHeadersError}
             <div class="text-xs text-error mt-1"><i class="fa-solid fa-triangle-exclamation mr-1"></i>{p._customHeadersError}</div>
           {/if}
-          <label class="cfg-field mt-2"><span class="cfg-label">会话标识请求头（可选，如 x-session-id）</span>
-            <input
-              type="text"
-              class="input input-xs input-bordered w-full"
-              value={p.sessionHeader ?? ""}
-              placeholder="留空则不发送"
+          <label class="cfg-field mt-2"><span class="cfg-label">请求身份（User-Agent 与会话标识头）</span>
+            <select class="select select-xs select-bordered w-full"
+              value={p.clientIdentity ?? ""}
               on:change={(e) => {
-                p.sessionHeader = e.currentTarget.value.trim() || undefined;
+                p.clientIdentity = e.currentTarget.value || undefined;
                 config = config;
-              }}
-            /></label
-          >
+              }}>
+              <option value="">不发送（默认）</option>
+              <option value="opencode">对齐 opencode</option>
+            </select>
+          </label>
         {/if}
         <div class="divider text-xs opacity-50 my-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i>错误内容检测（Fallback）</div>
         <p class="text-xs opacity-40 mb-2">每行一个关键词。若响应文本包含任意关键词，将视为失败并触发 fallback（用于某些返回 200 但内容是错误信息的 API）。</p>
