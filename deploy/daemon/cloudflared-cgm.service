@@ -1,0 +1,22 @@
+# /etc/systemd/system/cloudflared-cgm.service — 把 Dashboard（127.0.0.1:6767）经 Cloudflare Tunnel 发布出去
+# 远程托管 tunnel（ingress 在 Cloudflare 侧配置）；token 放在 /etc/cloudflared/tunnel.env（root 600，TUNNEL_TOKEN=...），
+# 不出现在命令行 / ps 中。公网域名必须先有 Cloudflare Access 应用保护，再创建 DNS 记录。
+[Unit]
+Description=cloudflared tunnel for CyberGroupmate dashboard (Cloudflare Access protected)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+DynamicUser=yes
+EnvironmentFile=/etc/cloudflared/tunnel.env
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
