@@ -3,7 +3,8 @@
 #
 # 用法：ZONE=asia-east1-b IMAGE=cgm-sandbox-golden-20261020 scripts/sandbox-vm/create-sandbox-vm.sh <name> <internal-ip> [<project>]
 #
-# 可选：SPOT=1（Spot VM，被回收时 STOP，homes PD 保留）、DELETION_PROTECTION=0（测试环境便于删除）
+# 可选：SPOT=1（Spot VM，被回收时 STOP，homes PD 保留）、DELETION_PROTECTION=0（测试环境便于删除）、
+#       BOOT_SIZE=40GB（不能小于 golden image，build-image.sh 产出 40GB）
 set -euo pipefail
 
 NAME="${1:?vm name}"
@@ -31,7 +32,7 @@ g compute disks describe "${NAME}-homes" --zone "$ZONE" >/dev/null 2>&1 || \
 g compute instances create "$NAME" \
   --zone "$ZONE" --machine-type "$MACHINE" \
   --image "$IMAGE" --image-project "$PROJECT" \
-  --boot-disk-size 30GB --boot-disk-type pd-balanced \
+  --boot-disk-size "${BOOT_SIZE:-40GB}" --boot-disk-type pd-balanced \
   --disk "name=${NAME}-homes,device-name=homes,mode=rw,auto-delete=no" \
   --network-interface "subnet=${SUBNET},private-network-ip=${IP},no-address,stack-type=IPV4_ONLY" \
   --tags cgm-sandbox \
