@@ -435,6 +435,12 @@ dashboard:
   port: 6767
   # 认证 Token（访问时需携带 ?token=xxx）
   token: "your-secret-token"
+  # 可选：经 Cloudflare Tunnel 发布并由 Cloudflare Access 保护时，用 Access 登录态代替 token。
+  # 服务端校验 Access JWT 的签名 / iss / aud / 过期时间；本机直连仍可用 token。
+  # cloudflare_access:
+  #   team_domain: "yourteam.cloudflareaccess.com"
+  #   aud: "<Access 应用的 Application Audience (AUD) tag>"
+  #   allowed_emails: ["you@example.com"]   # 可选，进一步限定邮箱
 
 # ─── Prometheus Metrics Exporter ───
 # 对外暴露 Prometheus 兼容的 /metrics 端点，供 Grafana / Prometheus 抓取

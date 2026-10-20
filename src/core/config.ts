@@ -424,6 +424,8 @@ export interface DashboardExternalConfig {
     port?: number;
     /** 认证 Token */
     token?: string;
+    /** Cloudflare Access：携带有效 Access JWT 的请求无需 token（经 Cloudflare Tunnel 发布时使用） */
+    cloudflareAccess?: { teamDomain: string; aud: string; allowedEmails?: string[] };
 }
 
 /** Metrics Exporter 配置 */
@@ -982,7 +984,17 @@ function parseDashboardConfig(fileConfig: Record<string, unknown>): DashboardExt
         host: str(raw.host),
         port: raw.port != null ? num(raw.port, 6767) : undefined,
         token: str(raw.token),
+        cloudflareAccess: parseDashboardCloudflareAccess(raw.cloudflare_access ?? raw.cloudflareAccess),
     };
+}
+
+function parseDashboardCloudflareAccess(raw: unknown): DashboardExternalConfig["cloudflareAccess"] {
+    if (!raw || typeof raw !== "object") return undefined;
+    const r = raw as Record<string, unknown>;
+    const teamDomain = str(r.team_domain ?? r.teamDomain)?.trim();
+    const aud = str(r.aud)?.trim();
+    if (!teamDomain || !aud) return undefined;
+    return { teamDomain, aud, allowedEmails: stringList(r.allowed_emails ?? r.allowedEmails) };
 }
 
 // ─── Metrics 配置解析 ───
@@ -1887,6 +1899,14 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (config.dashboard.host != null) d.host = config.dashboard.host;
         if (config.dashboard.port != null) d.port = config.dashboard.port;
         if (config.dashboard.token != null) d.token = config.dashboard.token;
+        const cfa = config.dashboard.cloudflareAccess;
+        if (cfa?.teamDomain && cfa.aud) {
+            d.cloudflare_access = {
+                team_domain: cfa.teamDomain,
+                aud: cfa.aud,
+                ...(cfa.allowedEmails?.length ? { allowed_emails: cfa.allowedEmails } : {}),
+            };
+        }
         obj.dashboard = d;
     }
 
@@ -2236,6 +2256,12 @@ export function validateConfig(config: unknown): { valid: boolean; errors: strin
         const token = dash.token != null ? String(dash.token) : "";
         if ((host === "0.0.0.0" || host === "::") && !token.trim()) {
             errors.push("dashboard.host 为 0.0.0.0 或 :: 时 token 不能为空");
+        }
+        const cfa = (dash.cloudflare_access ?? dash.cloudflareAccess) as Record<string, unknown> | undefined;
+        if (cfa && typeof cfa === "object") {
+            const hasTeam = !!str(cfa.team_domain ?? cfa.teamDomain)?.trim();
+            const hasAud = !!str(cfa.aud)?.trim();
+            if (hasTeam !== hasAud) errors.push("dashboard.cloudflare_access 需要同时设置 team_domain 与 aud");
         }
     }
 

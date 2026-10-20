@@ -1347,7 +1347,7 @@ async function main(): Promise<void> {
             };
         const dashboard = new DashboardServer(
             dashboardDeps,
-            { host: dashboardHost, port: dashboardPort, token: dashboardToken, enabled: true },
+            { host: dashboardHost, port: dashboardPort, token: dashboardToken, enabled: true, cloudflareAccess: appConfig.dashboard?.cloudflareAccess },
         );
         dashboardServer = dashboard;
         await dashboard.start();

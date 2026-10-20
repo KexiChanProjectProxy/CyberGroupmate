@@ -10,6 +10,7 @@ import type { SandboxPool } from "../sandbox/sandbox-pool.js";
 import type { MemoryStoreV2 } from "../memory-v2/index.js";
 import type { NotificationCenter } from "../event/notification-center.js";
 import type { TokenStatsCollector } from "./token-stats.js";
+import type { CloudflareAccessConfig } from "./cf-access.js";
 import type { MediaDownloader } from "../core/media-downloader.js";
 import type { ImageCatalog } from "../core/image-catalog.js";
 import type { PlatformAdapter } from "../adapter/platform-adapter.js";
@@ -51,6 +52,8 @@ export interface DashboardConfig {
     port: number;
     token: string;
     enabled: boolean;
+    /** 配置后，携带有效 Cloudflare Access JWT 的请求无需 token */
+    cloudflareAccess?: CloudflareAccessConfig;
 }
 
 /** WebSocket 推送事件 */

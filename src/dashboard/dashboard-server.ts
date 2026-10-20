@@ -7,16 +7,18 @@
  * - 静态文件 (/) — SPA 前端
  *
  * Token 认证: 所有请求需携带 ?token=xxx 或 header Authorization: Bearer xxx
+ * 配置 cloudflareAccess 时，携带有效 Cloudflare Access JWT 的请求无需 token（见 cf-access.ts）
  */
 
 import express from "express";
-import { createServer } from "node:http";
+import { createServer, type IncomingHttpHeaders } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DashboardDeps, DashboardConfig } from "./types.js";
 import { EventBridge } from "./event-bridge.js";
 import { createApiRouter } from "./api-routes.js";
+import { CloudflareAccessVerifier, accessTokenFromHeaders } from "./cf-access.js";
 import { createLogger } from "../core/logger.js";
 
 const log = createLogger("dashboard");
@@ -30,6 +32,7 @@ export class DashboardServer {
     private wss: WebSocketServer;
     private bridge: EventBridge;
     private config: DashboardConfig;
+    private accessVerifier: CloudflareAccessVerifier | null;
 
     constructor(deps: DashboardDeps, config: DashboardConfig) {
         this.config = config;
@@ -37,6 +40,7 @@ export class DashboardServer {
         this.server = createServer(this.app);
         this.wss = new WebSocketServer({ noServer: true });
         this.bridge = new EventBridge(deps);
+        this.accessVerifier = config.cloudflareAccess ? new CloudflareAccessVerifier(config.cloudflareAccess) : null;
 
         // JSON body parser
         this.app.use(express.json());
@@ -47,10 +51,10 @@ export class DashboardServer {
             if (!req.path.startsWith("/api")) return next();
             const token = (req.query.token as string)
                 || req.headers.authorization?.replace("Bearer ", "");
-            if (token !== this.config.token) {
-                return res.status(401).json({ error: "Unauthorized" });
-            }
-            next();
+            this.isAuthorized(token, req.headers).then((ok) => {
+                if (!ok) return res.status(401).json({ error: "Unauthorized" });
+                next();
+            }, next);
         });
 
         // API routes
@@ -67,13 +71,15 @@ export class DashboardServer {
             const url = new URL(request.url ?? "", `http://localhost:${this.config.port}`);
             const token = url.searchParams.get("token")
                 || request.headers.authorization?.replace("Bearer ", "");
-            if (token !== this.config.token) {
-                socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-                socket.destroy();
-                return;
-            }
-            this.wss.handleUpgrade(request, socket, head, (ws) => {
-                this.wss.emit("connection", ws, request);
+            void this.isAuthorized(token, request.headers).then((ok) => {
+                if (!ok) {
+                    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+                    socket.destroy();
+                    return;
+                }
+                this.wss.handleUpgrade(request, socket, head, (ws) => {
+                    this.wss.emit("connection", ws, request);
+                });
             });
         });
 
@@ -93,6 +99,13 @@ export class DashboardServer {
         });
     }
 
+
+    /** dashboard token，或（配置了 cloudflareAccess 时）有效的 Cloudflare Access JWT */
+    private async isAuthorized(token: string | undefined, headers: IncomingHttpHeaders): Promise<boolean> {
+        if (token && token === this.config.token) return true;
+        if (!this.accessVerifier) return false;
+        return (await this.accessVerifier.verify(accessTokenFromHeaders(headers))) !== null;
+    }
     async start(): Promise<void> {
         const host = this.config.host ?? "127.0.0.1";
         return new Promise((resolve) => {
