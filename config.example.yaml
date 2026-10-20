@@ -58,6 +58,7 @@ llm_profiles:
   #   model: claude-sonnet-4-20250514
   #   temperature: 0.7
   #   thinking_level: high  # 启用 adaptive thinking；启用后框架会自动禁用 assistant prefill
+  #   omit_temperature: true  # Claude Sonnet 5.5 等新模型不接受 temperature 参数，需设为 true
   #   max_context_tokens: 180000  # Claude 200K 窗口，预留输出空间
   #   max_tokens: 4096
   #   pricing:

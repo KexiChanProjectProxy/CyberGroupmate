@@ -1,0 +1,22 @@
+# /etc/systemd/system/cybergroupmate.service — daemon VM 上运行 CyberGroupmate 主程序
+# 将 USER / HOME 替换为实际用户；config.yaml 位于 $HOME/cgm（权限 600）。
+[Unit]
+Description=CyberGroupmate daemon (trusted code; untrusted code runs on per-chat Spot VMs via the broker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=USER
+WorkingDirectory=HOME/cgm
+Environment=NODE_ENV=production
+Environment=LOG_LEVEL=info
+ExecStart=/usr/local/bin/node HOME/cgm/node_modules/tsx/dist/cli.mjs src/main.ts
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
