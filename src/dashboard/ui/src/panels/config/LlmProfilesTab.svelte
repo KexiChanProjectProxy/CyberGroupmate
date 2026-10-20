@@ -119,9 +119,9 @@
               }}
             /><span>Prefill</span></label>
         </div>
-        {#if p.provider === "openai"}
+        {#if p.provider === "openai" || p.provider === "anthropic"}
           <div class="cfg-grid-2 mt-2">
-            <label class="cfg-field"><span class="cfg-label">Chat Completions 请求模式</span>
+            <label class="cfg-field"><span class="cfg-label">{p.provider === "anthropic" ? "Messages" : "Chat Completions"} 请求模式</span>
               <select class="select select-xs select-bordered w-full"
                 value={p.chatRequestMode ?? "non_stream"}
                 on:change={(e) => {
