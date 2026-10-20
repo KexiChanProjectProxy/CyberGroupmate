@@ -60,9 +60,9 @@ for _ in $(seq 1 30); do
 done
 g compute scp --zone "$ZONE" "${uploads[@]}" "$BUILDER:/tmp/"
 g compute ssh --zone "$ZONE" "$BUILDER" --command \
-  "sudo mkdir -p /opt/cgm && sudo tar -C /opt/cgm -xzf /tmp/repo.tgz && \
-   sudo REPO_DIR=/opt/cgm bash /opt/cgm/scripts/sandbox-vm/setup-vm.sh $setup_args && \
-   sudo rm -f /tmp/*.tar.zst /tmp/repo.tgz"
+  "sudo mkdir -p /opt/cgm-src && sudo tar -C /opt/cgm-src -xzf /tmp/repo.tgz && \
+   sudo REPO_DIR=/opt/cgm-src bash /opt/cgm-src/scripts/sandbox-vm/setup-vm.sh $setup_args && \
+   sudo rm -rf /tmp/*.tar.zst /tmp/repo.tgz /opt/cgm-src"
 g compute instances stop "$BUILDER" --zone "$ZONE"
 g compute images create "cgm-sandbox-golden-$DATE" --source-disk "$BUILDER" --source-disk-zone "$ZONE" \
   --family cgm-sandbox-golden

@@ -43,8 +43,12 @@ else
 fi
 
 # systemd 单元 + 脚本
-install -d -m 0755 /opt/cgm/scripts/sandbox-vm /etc/cgm
-install -m 0755 "$REPO_DIR"/scripts/sandbox-vm/*.sh /opt/cgm/scripts/sandbox-vm/
+install -d -m 0755 /opt/cgm/scripts/sandbox-vm /opt/cgm/docs /etc/cgm
+if [ "$(realpath "$REPO_DIR/scripts/sandbox-vm")" != "$(realpath /opt/cgm/scripts/sandbox-vm)" ]; then
+  install -m 0755 "$REPO_DIR"/scripts/sandbox-vm/*.sh /opt/cgm/scripts/sandbox-vm/
+  install -m 0644 "$REPO_DIR/docs/sandbox-remote.md" /opt/cgm/docs/ 2>/dev/null || true
+fi
+chmod 0755 /opt/cgm/scripts/sandbox-vm/*.sh
 install -m 0644 "$REPO_DIR"/deploy/sandbox/systemd/*.service "$REPO_DIR"/deploy/sandbox/systemd/*.timer /etc/systemd/system/
 install -m 0644 "$REPO_DIR/deploy/sandbox/sandboxd.example.yaml" /etc/cgm/sandboxd.yaml
 install -m 0644 "$REPO_DIR/deploy/sandbox/vm.env.example" /etc/cgm/vm.env
