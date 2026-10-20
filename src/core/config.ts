@@ -75,6 +75,11 @@ export interface LLMConfig {
     /** 自定义请求头字段。JSON 对象，会被展开合并到 API 请求头中（仅 openai/anthropic provider） */
     customHeaders?: Record<string, string>;
     /**
+     * 会话标识请求头名（如 "x-session-id"）。设置后，多轮会话（meta / CodeAct session）的每次请求
+     * 都带上该会话的稳定 id（ULID，不含 chatId），便于网关做粘性路由 / 缓存 / 统计。未设置则不发送。
+     */
+    sessionHeader?: string;
+    /**
      * 响应内容错误检测模式（字符串数组）。
      * 若 LLM 返回的 content 包含其中任意一个字符串，视为失败并触发 fallback 重试。
      * 适用于某些 API 在出错时返回 200 但 content 包含错误信息的情况。
@@ -1563,6 +1568,7 @@ function parseLLMProfile(raw: Record<string, unknown>): LLMConfig {
         customHeaders: (raw.custom_headers && typeof raw.custom_headers === "object" && !Array.isArray(raw.custom_headers))
             ? Object.fromEntries(Object.entries(raw.custom_headers).map(([k, v]) => [k, String(v)]))
             : undefined,
+        sessionHeader: str(raw.session_header)?.trim() || undefined,
         errorContentPatterns: (Array.isArray(raw.error_content_patterns) && raw.error_content_patterns.length > 0)
             ? raw.error_content_patterns.map(String)
             : undefined,
@@ -1677,6 +1683,7 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (p.vertexCredentials) entry.vertex_credentials = p.vertexCredentials;
         if (p.extraBody && Object.keys(p.extraBody).length > 0) entry.extra_body = p.extraBody;
         if (p.customHeaders && Object.keys(p.customHeaders).length > 0) entry.custom_headers = p.customHeaders;
+        if (p.sessionHeader) entry.session_header = p.sessionHeader;
         if (p.errorContentPatterns && p.errorContentPatterns.length > 0) entry.error_content_patterns = p.errorContentPatterns;
         if (p.chatRequestMode) entry.chat_request_mode = p.chatRequestMode;
         if (p.responsesRequestMode) entry.responses_request_mode = p.responsesRequestMode;

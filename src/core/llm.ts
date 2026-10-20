@@ -166,6 +166,8 @@ export interface LLMCallOptions {
     contextManifest?: ContextManifest;
     /** 外部取消信号。用于上层在新消息到达时中断本次推理并重建 prompt。 */
     abortSignal?: AbortSignal;
+    /** 多轮会话的稳定 id；profile 配置了 sessionHeader 时作为该请求头的值发送 */
+    sessionId?: string;
     /**
      * 禁用「fallback 到不支持 vision 的 profile 时把图片降级为文字」。
      *
@@ -554,16 +556,21 @@ async function _callLLMSingleKeyInner(
             if (options?.abortSignal) combinedSignals.push(options.abortSignal);
             const combinedSignal = AbortSignal.any(combinedSignals);
 
+            // 会话标识请求头：仅当 profile 配置了 sessionHeader 且调用方提供了 sessionId
+            const requestConfig: LLMConfig = config.sessionHeader && options?.sessionId
+                ? { ...config, customHeaders: { ...(config.customHeaders ?? {}), [config.sessionHeader]: options.sessionId } }
+                : config;
+
             // ── Provider dispatch ──
             let result: LLMResponse;
             if (config.provider === "anthropic") {
-                result = await callAnthropic(messages, config, model, temperature, maxTokens, thinkingLevel, prefill, stop, combinedSignal);
+                result = await callAnthropic(messages, requestConfig, model, temperature, maxTokens, thinkingLevel, prefill, stop, combinedSignal);
             } else if (config.provider === "google") {
-                result = await callGoogle(messages, config, model, temperature, maxTokens, thinkingLevel, prefill, stop, combinedSignal);
+                result = await callGoogle(messages, requestConfig, model, temperature, maxTokens, thinkingLevel, prefill, stop, combinedSignal);
             } else if (config.provider === "openai_responses") {
-                result = await callOpenAIResponses(messages, config, model, temperature, maxTokens, thinkingLevel, prefill, stop, combinedSignal);
+                result = await callOpenAIResponses(messages, requestConfig, model, temperature, maxTokens, thinkingLevel, prefill, stop, combinedSignal);
             } else {
-                result = await callOpenAI(messages, config, model, temperature, maxTokens, thinkingLevel, prefill, stop, combinedSignal);
+                result = await callOpenAI(messages, requestConfig, model, temperature, maxTokens, thinkingLevel, prefill, stop, combinedSignal);
             }
 
             // ── 自动拼接 prefill 前缀到返回内容 ──
