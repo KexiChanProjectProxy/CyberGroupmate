@@ -11,6 +11,8 @@ BLOCKS_KB="${HOME_QUOTA_BLOCKS_KB:-5242880}"   # 5 GiB
 INODES="${HOME_QUOTA_INODES:-200000}"
 
 [ -d "$HOMES_DIR" ] || exit 0
+# 临时 VM 模式（home 在启动盘、无 project quota）：每台 VM 只服务一个 chat，磁盘上限即启动盘大小
+findmnt -n -o OPTIONS --target "$HOMES_MOUNT" | grep -q prjquota || exit 0
 
 for dir in "$HOMES_DIR"/*/; do
   [ -d "$dir" ] || continue

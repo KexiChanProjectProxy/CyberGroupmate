@@ -11,6 +11,8 @@
 #   BUILD_FROM_SOURCE=1  在 builder VM 上用当前仓库（git HEAD）构建两个镜像，无需本机 docker / 镜像仓库
 #   SPOT=1               builder 使用 Spot VM
 #   BUILDER_NETWORK=default
+#   EPHEMERAL=1          制作 broker 按需创建的临时 VM 镜像（纯 TCP、无 homes PD）；需同时给 HOST_VM_IP
+#   IMAGE_FAMILY=cgm-sandbox-golden
 set -euo pipefail
 
 PROJECT="${1:-$(gcloud config get-value project 2>/dev/null)}"
@@ -61,9 +63,11 @@ done
 g compute scp --zone "$ZONE" "${uploads[@]}" "$BUILDER:/tmp/"
 g compute ssh --zone "$ZONE" "$BUILDER" --command \
   "sudo mkdir -p /opt/cgm-src && sudo tar -C /opt/cgm-src -xzf /tmp/repo.tgz && \
-   sudo REPO_DIR=/opt/cgm-src bash /opt/cgm-src/scripts/sandbox-vm/setup-vm.sh $setup_args && \
+   sudo REPO_DIR=/opt/cgm-src EPHEMERAL=${EPHEMERAL:-0} HOST_VM_IP=${HOST_VM_IP:-} bash /opt/cgm-src/scripts/sandbox-vm/setup-vm.sh $setup_args && \
    sudo rm -rf /tmp/*.tar.zst /tmp/repo.tgz /opt/cgm-src"
 g compute instances stop "$BUILDER" --zone "$ZONE"
-g compute images create "cgm-sandbox-golden-$DATE" --source-disk "$BUILDER" --source-disk-zone "$ZONE" \
-  --family cgm-sandbox-golden
-echo "golden image: cgm-sandbox-golden-$DATE"
+FAMILY="${IMAGE_FAMILY:-cgm-sandbox-golden}"
+# GVNIC：C4 等新机型必需
+g compute images create "$FAMILY-$DATE" --source-disk "$BUILDER" --source-disk-zone "$ZONE" \
+  --family "$FAMILY" --guest-os-features=UEFI_COMPATIBLE,GVNIC,VIRTIO_SCSI_MULTIQUEUE
+echo "golden image: $FAMILY-$DATE"

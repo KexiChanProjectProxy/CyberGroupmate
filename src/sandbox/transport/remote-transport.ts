@@ -1,10 +1,13 @@
 /**
- * remote-transport.ts — host 侧连接 sandboxd（mTLS），完成握手后返回字节流
+ * remote-transport.ts — host 侧连接 sandboxd，完成握手后返回字节流
+ *
+ * 传输：mTLS；或在同一 GCP VPC 内网中使用纯 TCP（tls 省略）。
  */
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Duplex, Readable } from "node:stream";
+import * as net from "node:net";
 import * as tls from "node:tls";
 import { createLogger } from "../../core/logger.js";
 import { safeParseJson } from "../protocol/ndjson.js";
@@ -20,7 +23,8 @@ export interface RemoteEndpoint {
 
 export interface RemoteTransportConfig {
     endpoints: RemoteEndpoint[];
-    tls: { ca: string; cert: string; key: string };
+    /** 省略 → 纯 TCP（仅限 VPC 内网） */
+    tls?: { ca: string; cert: string; key: string } | null;
     connectTimeoutMs: number;
     /** 握手（含 skills 上传）超时 */
     handshakeTimeoutMs?: number;
@@ -34,7 +38,7 @@ export interface RemoteSessionOpenRequest {
 }
 
 export interface RemoteSession {
-    socket: tls.TLSSocket;
+    socket: net.Socket;
     /** sandbox 内实际 home（用于识别 sandbox 路径） */
     home: string;
     sessionId: string;
@@ -74,7 +78,7 @@ function splitAddress(address: string): { host: string; port: number } {
 
 let tlsMaterialCache: { key: string; value: { ca: Buffer; cert: Buffer; key: Buffer } } | null = null;
 
-function loadTlsMaterial(cfg: RemoteTransportConfig["tls"]): { ca: Buffer; cert: Buffer; key: Buffer } {
+function loadTlsMaterial(cfg: NonNullable<RemoteTransportConfig["tls"]>): { ca: Buffer; cert: Buffer; key: Buffer } {
     const cacheKey = `${cfg.ca}\n${cfg.cert}\n${cfg.key}`;
     if (tlsMaterialCache?.key === cacheKey) return tlsMaterialCache.value;
     const value = { ca: readFileSync(cfg.ca), cert: readFileSync(cfg.cert), key: readFileSync(cfg.key) };
@@ -82,31 +86,32 @@ function loadTlsMaterial(cfg: RemoteTransportConfig["tls"]): { ca: Buffer; cert:
     return value;
 }
 
-export async function openRemoteSession(
-    cfg: RemoteTransportConfig,
-    request: RemoteSessionOpenRequest,
-    deps: { packSkills: () => Readable },
-): Promise<RemoteSession> {
-    const endpoint = selectEndpoint(cfg.endpoints, request.chatId);
+/** 建立到 sandboxd 的连接（mTLS 或 VPC 内纯 TCP） */
+export function connectEndpoint(cfg: Pick<RemoteTransportConfig, "tls" | "connectTimeoutMs">, endpoint: RemoteEndpoint): Promise<net.Socket> {
     const { host, port } = splitAddress(endpoint.address);
-    const material = loadTlsMaterial(cfg.tls);
-
-    const socket = await new Promise<tls.TLSSocket>((resolve, reject) => {
-        const s = tls.connect({
-            host,
-            port,
-            servername: endpoint.servername ?? host,
-            ca: material.ca,
-            cert: material.cert,
-            key: material.key,
-            minVersion: "TLSv1.3",
-            rejectUnauthorized: true,
-        });
+    return new Promise<net.Socket>((resolve, reject) => {
+        let s: net.Socket;
+        const readyEvent = cfg.tls ? "secureConnect" : "connect";
+        if (cfg.tls) {
+            const material = loadTlsMaterial(cfg.tls);
+            s = tls.connect({
+                host,
+                port,
+                servername: endpoint.servername ?? host,
+                ca: material.ca,
+                cert: material.cert,
+                key: material.key,
+                minVersion: "TLSv1.3",
+                rejectUnauthorized: true,
+            });
+        } else {
+            s = net.connect({ host, port });
+        }
         const timer = setTimeout(() => {
             s.destroy();
             reject(new RemoteSessionError("connect_timeout", `连接 sandbox ${endpoint.name} (${endpoint.address}) 超时`));
         }, cfg.connectTimeoutMs);
-        s.once("secureConnect", () => {
+        s.once(readyEvent, () => {
             clearTimeout(timer);
             resolve(s);
         });
@@ -115,6 +120,15 @@ export async function openRemoteSession(
             reject(new RemoteSessionError("connect_failed", `连接 sandbox ${endpoint.name} 失败: ${err.message}`));
         });
     });
+}
+
+export async function openRemoteSession(
+    cfg: RemoteTransportConfig,
+    request: RemoteSessionOpenRequest,
+    deps: { packSkills: () => Readable },
+): Promise<RemoteSession> {
+    const endpoint = selectEndpoint(cfg.endpoints, request.chatId);
+    const socket = await connectEndpoint(cfg, endpoint);
     socket.setNoDelay(true);
     socket.setKeepAlive(true, 30_000);
 
@@ -176,7 +190,7 @@ export async function openRemoteSession(
     });
 }
 
-async function uploadSkills(socket: tls.TLSSocket, tar: Readable): Promise<void> {
+async function uploadSkills(socket: net.Socket, tar: Readable): Promise<void> {
     const hash = createHash("sha256");
     let seq = 0;
     let carry = Buffer.alloc(0);
@@ -202,18 +216,8 @@ export async function remoteControlRequest(
     endpoint: RemoteEndpoint,
     request: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-    const { host, port } = splitAddress(endpoint.address);
-    const material = loadTlsMaterial(cfg.tls);
+    const socket = await connectEndpoint(cfg, endpoint);
     return new Promise((resolve, reject) => {
-        const socket = tls.connect({
-            host,
-            port,
-            servername: endpoint.servername ?? host,
-            ca: material.ca,
-            cert: material.cert,
-            key: material.key,
-            minVersion: "TLSv1.3",
-        });
         const timer = setTimeout(() => {
             socket.destroy();
             reject(new Error("sandbox control request timed out"));
@@ -222,16 +226,14 @@ export async function remoteControlRequest(
             clearTimeout(timer);
             reject(err);
         });
-        socket.once("secureConnect", () => {
-            const reader = readHandshakeLines(socket as unknown as Duplex, (line) => {
-                clearTimeout(timer);
-                reader.dispose();
-                socket.end();
-                const msg = safeParseJson(line);
-                if (msg && typeof msg === "object") resolve(msg as Record<string, unknown>);
-                else reject(new Error("invalid control response"));
-            }, () => reject(new Error("control response too large")), 16 * 1024 * 1024);
-            writeJsonLine(socket as unknown as Duplex, request);
-        });
+        const reader = readHandshakeLines(socket as unknown as Duplex, (line) => {
+            clearTimeout(timer);
+            reader.dispose();
+            socket.end();
+            const msg = safeParseJson(line);
+            if (msg && typeof msg === "object") resolve(msg as Record<string, unknown>);
+            else reject(new Error("invalid control response"));
+        }, () => reject(new Error("control response too large")), 16 * 1024 * 1024);
+        writeJsonLine(socket as unknown as Duplex, request);
     });
 }

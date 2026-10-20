@@ -95,9 +95,9 @@ export class DockerLauncher implements SessionLauncher {
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--pids-limit", String(d.pids_limit),
-            "--memory", d.memory,
-            "--memory-swap", d.memory,
-            "--cpus", d.cpus,
+            // "0"：不设上限（临时 VM 一台只服务一个 chat，以 VM 规格为界）
+            ...(d.memory && d.memory !== "0" ? ["--memory", d.memory, "--memory-swap", d.memory] : []),
+            ...(d.cpus && d.cpus !== "0" ? ["--cpus", d.cpus] : []),
             "--ulimit", "core=0",
             "--ulimit", `nofile=${d.nofile}:${d.nofile}`,
             "--init",

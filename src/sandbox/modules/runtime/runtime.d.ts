@@ -69,6 +69,16 @@ declare const runtime: {
     };
 
     /**
+     * 提示本聊天下一台隔离沙盒 VM 的规格（仅在按需创建 VM 的部署中可用）。
+     * 当前 VM 不会被替换（工作目录不跨 VM 保留），hint 对下一次创建的 VM 生效，2 小时后过期。
+     * 适合在任务明显需要更多 CPU / 内存（大文件转码、编译等）时调用；不传参数则只查询可用档位。
+     *
+     * @example
+     * await runtime.sandboxSize("large");
+     */
+    sandboxSize(size?: string): Promise<{ size: string | null; machineType: string | null; sizes: Record<string, string>; appliesTo: "next_vm" }>;
+
+    /**
      * 设置一次性定时提醒（自然语言）。到期后 agent 将被唤醒并收到 description 作为新任务。重复定时提醒请用 cron
      *
      * ⚠️ description 必须是详细的自然语言描述，不是代码。

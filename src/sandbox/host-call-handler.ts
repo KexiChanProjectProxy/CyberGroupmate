@@ -43,6 +43,7 @@ import { getPendingMessageSignal, SendInterruptedError, type InterruptedSendPayl
 import { extractSentMessageIds } from "./notify-guard.js";
 import { InboxStore, pushBufferToSandbox, rewriteRemoteFileArgs, type SandboxFileTransport } from "./files/sandbox-files.js";
 import { syncBackSkills } from "./skills/skills-sync.js";
+import { getSizeHint, setSizeHint } from "./provisioner/size-hints.js";
 
 /** remote sandbox 拉取文件的 host 侧 inbox（全进程共享） */
 let sharedInbox: InboxStore | null = null;
@@ -814,6 +815,22 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
         // runtime.env.*：sandbox 只能看到 / 修改 scope=sandbox|both 中对 sandbox 可见的条目，
         // 且只能写入 scope=sandbox。host / both 作用域的变量会进入宿主进程 env
         // （NODE_OPTIONS、HTTPS_PROXY、MCP header 插值……），只允许管理员通过 Dashboard / config.yaml 修改。
+        if (method === "runtime.sandboxSize") {
+            const prov = loadConfig().sandbox?.remote?.provisioner;
+            if (!prov) throw new Error("当前部署不按需创建沙盒 VM，runtime.sandboxSize 不可用");
+            if (args.length === 0 || args[0] == null) {
+                const current = getSizeHint(chatId) ?? null;
+                return { size: current, machineType: current ? prov.sizes[current] : null, sizes: prov.sizes, appliesTo: "next_vm" };
+            }
+            const size = String(args[0]).trim();
+            if (!prov.sizes[size]) {
+                throw new Error(`未知规格 "${size.slice(0, 32)}"，可选: ${Object.keys(prov.sizes).join(", ")}`);
+            }
+            setSizeHint(chatId, size);
+            log.info("runtime.sandboxSize", { chatId, size, machineType: prov.sizes[size] });
+            return { size, machineType: prov.sizes[size], sizes: prov.sizes, appliesTo: "next_vm" };
+        }
+
         if (method === "runtime.env.list") {
             const cfg = loadConfig("config.yaml", true);
             return normalizeEnvVars(cfg.envVars).filter(isSandboxVisibleEnvVar);

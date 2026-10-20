@@ -1,7 +1,8 @@
 /**
  * sandboxd.ts — 独立 VM 上的 sandbox 守护进程
  *
- * 只接受 host 的 mTLS 连接（CA 校验 + 客户端证书指纹白名单）。每条连接 = 一个 session：
+ * 只接受 host 的连接：mTLS（CA 校验 + 客户端证书指纹白名单），或在同一 GCP VPC 内使用纯 TCP
+ * （访问控制由 VPC 防火墙只放行 cgm-host tag 保证）。每条连接 = 一个 session：
  * 握手（session_open / 可选的 skills 上传）后为该 chat 启动隔离的 supervisor（默认 docker + gVisor），
  * 然后在 socket ⇄ supervisor stdio 之间做纯字节转发——sandboxd 不解析 session 方向的任何数据，
  * 因此被攻陷的 session 无法借 sandboxd 的解析代码提权。
@@ -16,6 +17,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chownSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, statfsSync } from "node:fs";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
+import * as net from "node:net";
 import * as tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { configureLogger, createLogger } from "../../core/logger.js";
@@ -38,21 +40,23 @@ interface ActiveSession {
 }
 
 export class Sandboxd {
-    private server: tls.Server | null = null;
+    private server: net.Server | null = null;
     private readonly sessions = new Map<string, ActiveSession>();
     private readonly store: SkillsStore;
     private readonly homesDir: string;
     private allowedFingerprints: Set<string>;
     private readonly logRing: Array<{ ts: number; line: string }> = [];
     private sweepTimer: ReturnType<typeof setInterval> | null = null;
-    private readonly sockets = new Set<tls.TLSSocket>();
+    private readonly sockets = new Set<net.Socket>();
 
     constructor(private readonly cfg: SandboxdConfig, private readonly launcher: SessionLauncher = createLauncher(cfg)) {
         this.homesDir = join(cfg.data_dir, "homes");
         mkdirSync(this.homesDir, { recursive: true, mode: 0o711 });
         this.store = new SkillsStore(cfg.data_dir, cfg.max_skills_bytes, cfg.keep_skill_generations);
         this.allowedFingerprints = loadAllowedFingerprints(cfg);
-        if (this.allowedFingerprints.size === 0) {
+        if (!cfg.tls) {
+            log.info("sandboxd 以纯 TCP 模式运行（仅限 VPC 内网，访问控制由防火墙保证）");
+        } else if (this.allowedFingerprints.size === 0) {
             log.warn("未配置客户端证书指纹白名单：接受任何由 CA 签发的客户端证书");
         }
     }
@@ -74,15 +78,21 @@ export class Sandboxd {
 
     async listen(): Promise<{ address: string; port?: number }> {
         this.launcher.pruneOrphans();
-        this.server = tls.createServer({
-            ca: readFileSync(this.cfg.tls.ca),
-            cert: readFileSync(this.cfg.tls.cert),
-            key: readFileSync(this.cfg.tls.key),
-            requestCert: true,
-            rejectUnauthorized: true,
-            minVersion: "TLSv1.3",
-        }, (socket) => this.handleConnection(socket));
-        this.server.on("tlsClientError", (err) => log.warn("TLS 客户端错误", { error: err.message }));
+        const tlsCfg = this.cfg.tls;
+        if (tlsCfg) {
+            const server = tls.createServer({
+                ca: readFileSync(tlsCfg.ca),
+                cert: readFileSync(tlsCfg.cert),
+                key: readFileSync(tlsCfg.key),
+                requestCert: true,
+                rejectUnauthorized: true,
+                minVersion: "TLSv1.3",
+            }, (socket) => this.handleConnection(socket));
+            server.on("tlsClientError", (err) => log.warn("TLS 客户端错误", { error: err.message }));
+            this.server = server;
+        } else {
+            this.server = net.createServer((socket) => this.handleConnection(socket));
+        }
 
         const listen = this.cfg.listen;
         await new Promise<void>((resolveListen, reject) => {
@@ -116,16 +126,18 @@ export class Sandboxd {
         return this.sessions.size;
     }
 
-    private handleConnection(socket: tls.TLSSocket): void {
+    private handleConnection(socket: net.Socket): void {
         this.sockets.add(socket);
         socket.once("close", () => this.sockets.delete(socket));
-        const peer = socket.getPeerCertificate();
-        const fingerprint = normalizeFingerprint(peer?.fingerprint256 ?? "");
-        if (!socket.authorized || !fingerprint || (this.allowedFingerprints.size > 0 && !this.allowedFingerprints.has(fingerprint))) {
-            log.warn("拒绝未授权的客户端", { authorized: socket.authorized, fingerprint: fingerprint.slice(0, 16) });
-            writeJsonLine(socket as unknown as Duplex, { type: "session_error", code: "auth", message: "client not allowed" });
-            socket.end();
-            return;
+        if (socket instanceof tls.TLSSocket) {
+            const peer = socket.getPeerCertificate();
+            const fingerprint = normalizeFingerprint(peer?.fingerprint256 ?? "");
+            if (!socket.authorized || !fingerprint || (this.allowedFingerprints.size > 0 && !this.allowedFingerprints.has(fingerprint))) {
+                log.warn("拒绝未授权的客户端", { authorized: socket.authorized, fingerprint: fingerprint.slice(0, 16) });
+                writeJsonLine(socket as unknown as Duplex, { type: "session_error", code: "auth", message: "client not allowed" });
+                socket.end();
+                return;
+            }
         }
         socket.setNoDelay(true);
         socket.setKeepAlive(true, 30_000);
@@ -258,7 +270,7 @@ export class Sandboxd {
     }
 
     private async launchSession(
-        socket: tls.TLSSocket,
+        socket: net.Socket,
         open: SessionOpen,
         reader: { finish(): void; dispose(): void },
         fail: (code: SessionErrorCode, message: string) => void,

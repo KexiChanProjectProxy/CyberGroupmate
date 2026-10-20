@@ -591,11 +591,33 @@ export interface SandboxConfig {
     /** 协议上限覆盖（见 src/sandbox/protocol/limits.ts） */
     limits?: Record<string, number>;
     remote?: {
+        /** 常驻 sandbox VM（与 provisioner 二选一） */
         endpoints: SandboxEndpointConfig[];
-        tls: { ca: string; cert: string; key: string };
+        /** mTLS；省略时为纯 TCP（仅限同一 GCP VPC 内网） */
+        tls?: { ca: string; cert: string; key: string };
         connectTimeoutMs: number;
         pingIntervalMs: number;
+        /** 每个 chat 一台临时 Spot VM（经 Cloud Run broker 创建 / 删除） */
+        provisioner?: SandboxProvisionerConfig;
     };
+}
+
+export interface SandboxProvisionerConfig {
+    /** Cloud Run broker 地址（daemon 服务账号需有 run.invoker） */
+    brokerUrl: string;
+    /** 已建 sandbox 子网的候选 region；按每日 Spot 价格排序后依次尝试 */
+    regions: string[];
+    /** 规格档位 → C4 机型（agent 用 runtime.sandboxSize(档位) hint） */
+    sizes: Record<string, string>;
+    defaultSize: string;
+    /** sandboxd 端口 */
+    port: number;
+    /** 从申请 VM 到 sandboxd 可连接的超时 */
+    vmReadyTimeoutMs: number;
+    /** 每日价格缓存文件 */
+    priceCacheFile: string;
+    /** Billing Catalog API 的 quota project（可选） */
+    quotaProject?: string;
 }
 
 export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
@@ -1314,10 +1336,31 @@ function parseSandboxConfig(fileConfig: Record<string, unknown>): SandboxConfig 
                     ...(str(ep.servername) ? { servername: str(ep.servername) } : {}),
                     ...(ep.max_sessions != null ? { maxSessions: num(ep.max_sessions, 16) } : {}),
                 })),
-            tls: { ca: str(tlsRaw.ca) ?? "", cert: str(tlsRaw.cert) ?? "", key: str(tlsRaw.key) ?? "" },
+            ...(remoteRaw.tls && typeof remoteRaw.tls === "object"
+                ? { tls: { ca: str(tlsRaw.ca) ?? "", cert: str(tlsRaw.cert) ?? "", key: str(tlsRaw.key) ?? "" } }
+                : {}),
             connectTimeoutMs: num(remoteRaw.connect_timeout_ms, 10_000),
             pingIntervalMs: num(remoteRaw.ping_interval_ms, 15_000),
         };
+        const provRaw = (remoteRaw.provisioner && typeof remoteRaw.provisioner === "object")
+            ? remoteRaw.provisioner as Record<string, unknown>
+            : undefined;
+        if (provRaw) {
+            const sizesRaw = (provRaw.sizes && typeof provRaw.sizes === "object") ? provRaw.sizes as Record<string, unknown> : {};
+            const sizes = Object.keys(sizesRaw).length > 0
+                ? Object.fromEntries(Object.entries(sizesRaw).map(([k, v]) => [k, String(v)]))
+                : { small: "c4-standard-2", medium: "c4-standard-4", large: "c4-standard-8" };
+            result.remote.provisioner = {
+                brokerUrl: str(provRaw.broker_url) ?? "",
+                regions: Array.isArray(provRaw.regions) ? (provRaw.regions as unknown[]).map(String) : [],
+                sizes,
+                defaultSize: str(provRaw.default_size) ?? "small",
+                port: num(provRaw.port, 7443),
+                vmReadyTimeoutMs: num(provRaw.vm_ready_timeout_ms, 300_000),
+                priceCacheFile: str(provRaw.price_cache_file) ?? "workspace/.sandbox-prices.json",
+                ...(str(provRaw.quota_project) ? { quotaProject: str(provRaw.quota_project) } : {}),
+            };
+        }
     }
     return result;
 }
@@ -1977,9 +2020,21 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
                     ...(ep.servername ? { servername: ep.servername } : {}),
                     ...(ep.maxSessions != null ? { max_sessions: ep.maxSessions } : {}),
                 })),
-                tls: { ca: sb.remote.tls.ca, cert: sb.remote.tls.cert, key: sb.remote.tls.key },
+                ...(sb.remote.tls ? { tls: { ca: sb.remote.tls.ca, cert: sb.remote.tls.cert, key: sb.remote.tls.key } } : {}),
                 connect_timeout_ms: sb.remote.connectTimeoutMs,
                 ping_interval_ms: sb.remote.pingIntervalMs,
+                ...(sb.remote.provisioner ? {
+                    provisioner: {
+                        broker_url: sb.remote.provisioner.brokerUrl,
+                        regions: sb.remote.provisioner.regions,
+                        sizes: sb.remote.provisioner.sizes,
+                        default_size: sb.remote.provisioner.defaultSize,
+                        port: sb.remote.provisioner.port,
+                        vm_ready_timeout_ms: sb.remote.provisioner.vmReadyTimeoutMs,
+                        price_cache_file: sb.remote.provisioner.priceCacheFile,
+                        ...(sb.remote.provisioner.quotaProject ? { quota_project: sb.remote.provisioner.quotaProject } : {}),
+                    },
+                } : {}),
             };
         }
         obj.sandbox = sbObj;
@@ -2254,17 +2309,27 @@ export function validateConfig(config: unknown): { valid: boolean; errors: strin
     // sandbox
     const sandbox = c.sandbox as SandboxConfig | undefined;
     if (sandbox?.mode === "remote") {
-        if (!sandbox.remote || sandbox.remote.endpoints.length === 0) {
-            errors.push("sandbox.mode=remote 需要至少一个 sandbox.remote.endpoints");
+        const prov = sandbox.remote?.provisioner;
+        if (prov) {
+            if (!/^https:\/\//.test(prov.brokerUrl)) errors.push("sandbox.remote.provisioner.broker_url 必须是 https:// 地址");
+            if (prov.regions.length === 0) errors.push("sandbox.remote.provisioner.regions 不能为空");
+            if (!prov.sizes[prov.defaultSize]) errors.push(`sandbox.remote.provisioner.default_size "${prov.defaultSize}" 不在 sizes 中`);
+            for (const [size, type] of Object.entries(prov.sizes)) {
+                if (!/^c4-(standard|highcpu|highmem)-\d+$/.test(type)) errors.push(`sandbox.remote.provisioner.sizes.${size} 只能是 C4 机型: ${type}`);
+            }
+        } else if (!sandbox.remote || sandbox.remote.endpoints.length === 0) {
+            errors.push("sandbox.mode=remote 需要 sandbox.remote.provisioner 或至少一个 sandbox.remote.endpoints");
         } else {
             for (const ep of sandbox.remote.endpoints) {
                 if (!/^[^:\s]+:\d{1,5}$/.test(ep.address)) errors.push(`sandbox endpoint "${ep.name}": address 必须是 host:port`);
             }
         }
-        for (const key of ["ca", "cert", "key"] as const) {
-            const file = sandbox.remote?.tls?.[key];
-            if (!file) errors.push(`sandbox.remote.tls.${key} 不能为空（mTLS）`);
-            else if (!existsSync(file)) errors.push(`sandbox.remote.tls.${key} 文件不存在: ${file}`);
+        if (sandbox.remote?.tls) {
+            for (const key of ["ca", "cert", "key"] as const) {
+                const file = sandbox.remote.tls[key];
+                if (!file) errors.push(`sandbox.remote.tls.${key} 不能为空`);
+                else if (!existsSync(file)) errors.push(`sandbox.remote.tls.${key} 文件不存在: ${file}`);
+            }
         }
     }
 

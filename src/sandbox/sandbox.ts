@@ -77,8 +77,11 @@ export interface SandboxRuntimeConfig {
     readyTimeoutMs?: number;
     limits?: Partial<ProtocolLimits>;
     remote?: {
-        /** 建立到 sandboxd 的会话；返回握手完成后的字节流与 sandbox 内实际 home */
-        openSession: (request: RemoteSessionRequest) => Promise<{ socket: Duplex; home: string }>;
+        /**
+         * 建立到 sandboxd 的会话；返回握手完成后的字节流与 sandbox 内实际 home。
+         * release（可选）在会话结束时调用一次（临时 VM 模式下用于删除 VM）。
+         */
+        openSession: (request: RemoteSessionRequest) => Promise<{ socket: Duplex; home: string; release?: () => Promise<void> }>;
         pingIntervalMs?: number;
     };
 }
@@ -153,6 +156,8 @@ export class Sandbox extends EventEmitter {
     private chatId: string;
     /** remote 会话握手时 sandboxd 报告的实际 home */
     private remoteHome: string | null = null;
+    /** 会话结束时释放远端资源（临时 VM） */
+    private releaseRemote: (() => Promise<void>) | null = null;
 
     /** 协议上限（host 侧强制，sandbox 视为不可信） */
     private readonly limits: ProtocolLimits;
@@ -315,7 +320,7 @@ export class Sandbox extends EventEmitter {
         if (this.isRemote()) {
             const remote = this.runtime.remote;
             if (!remote) throw new Error("sandbox.mode=remote 但未配置 remote transport");
-            let session: { socket: Duplex; home: string };
+            let session: { socket: Duplex; home: string; release?: () => Promise<void> };
             try {
                 session = await remote.openSession({ chatId: this.chatId, env, home, stateDir, shellPath });
             } catch (err) {
@@ -325,6 +330,7 @@ export class Sandbox extends EventEmitter {
             }
             const socket = session.socket;
             this.remoteHome = session.home;
+            this.releaseRemote = session.release ?? null;
             this.attachTransport(socket, socket, () => socket.destroy());
             // 立即开始心跳：sandboxd 按"host 多久没发字节"回收会话，冷启动期间也必须保持活跃
             this.startPing();
@@ -412,6 +418,11 @@ export class Sandbox extends EventEmitter {
         }
         this.pendingOps.clear();
         const hadTransport = this.input !== null;
+        const release = this.releaseRemote;
+        this.releaseRemote = null;
+        if (release) {
+            void release().catch((err) => log.warn("释放远端 sandbox 资源失败", { chatId: this.chatId, error: String(err) }));
+        }
         this.rl?.dispose();
         this.rl = null;
         this.input = null;

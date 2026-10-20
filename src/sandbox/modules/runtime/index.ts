@@ -61,6 +61,11 @@ export function installRuntime(env: CapabilityRegistryEnv) {
             },
         },
 
+        sandboxSize: async (size?: string) => {
+            if (!_callbacks) throw new Error("Runtime not initialized");
+            return _callbacks.callHost("runtime.sandboxSize", size === undefined ? [] : [size]);
+        },
+
         /**
          * 设置一次性定时提醒（自然语言）。
          * 到期后 agent 将被唤醒并收到 description 作为新任务。

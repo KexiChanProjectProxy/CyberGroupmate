@@ -1,8 +1,10 @@
 [Unit]
 Description=CyberGroupmate sandbox daemon (sandboxd)
 Documentation=file:///opt/cgm/docs/sandbox-remote.md
-After=docker.service cgm-iptables.service var-lib-cgm.mount
-Requires=docker.service cgm-iptables.service var-lib-cgm.mount
+After=docker.service cgm-iptables.service
+Requires=docker.service cgm-iptables.service
+# 常驻模式：/var/lib/cgm 为独立 homes PD（var-lib-cgm.mount）；临时 VM 模式：位于启动盘
+RequiresMountsFor=/var/lib/cgm
 
 [Service]
 Type=simple

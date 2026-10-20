@@ -143,6 +143,7 @@ shared/runtime.d.ts — 系统级能力
 - `env.get`: 查询单个 sandbox 可见的环境变量，不存在或不可见返回 null
 - `env.set`: 新增或覆盖 sandbox 作用域环境变量（仅对 sandbox 可见）。 不能覆盖管理员配置的 host / both 变量，也不能与宿主现有环境变量同名。
 - `env.delete`: 删除 sandbox 作用域环境变量（不存在时安全返回；不能删除 host / both 变量）
+- `sandboxSize`: 提示本聊天下一台隔离沙盒 VM 的规格（仅在按需创建 VM 的部署中可用）。 当前 VM 不会被替换（工作目录不跨 VM 保留），hint 对下一次创建的 VM 生效，2 小时后过期。 适合在任务明显需要更多 CPU / 内存（大文件转码、编译等）时调用；不传参数则只查询可用档位。
 - `remind`: 设置一次性定时提醒（自然语言）。到期后 agent 将被唤醒并收到 description 作为新任务。重复定时提醒请用 cron ⚠️ description 必须是详细的自然语言描述，不是代码。 写清楚：要做什么、给谁发、发什么内容、如何获取信息等。 限制：最短 1 分钟，最长 365 天，每个群最多 10 个活跃提醒。
 - `elevate`: 将当前任务升级给 Meta Agent 处理，并立即入队一次跨群 callback attention。 用于当前 subagent 视角无法完成的跨群/跨人/全局编排任务：例如需要查别的群、协调多个群、让 Meta 重新分派给其他群、或当前群写权限不足。 request 必须写成详细自然语言，说明当前群、已经查到什么、卡在哪里、希望 Meta 做什么。
 - `extendSteps`: 增加当前 CodeAct session 的可用轮次。 仅对当前 session（本轮任务）生效，不会持久化到下次任务。 在本轮代码中调用后，从下一轮开始生效。

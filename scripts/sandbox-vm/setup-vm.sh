@@ -7,7 +7,11 @@
 # 用法（在 builder VM 上，以 root）：
 #   REPO_DIR=/opt/cgm ./setup-vm.sh <sandbox-image.tar.zst> <sandboxd-image.tar.zst>
 #   REPO_DIR=/opt/cgm ./setup-vm.sh --build      # 从 REPO_DIR 中的完整源码构建镜像
+#
+# EPHEMERAL=1：用于 broker 按需创建的临时 Spot VM——sandboxd 以 VPC 内纯 TCP 监听、home 在启动盘
+#              （无 homes PD），HOST_VM_IP 为 daemon VM 内网 IP（写入 /etc/cgm/vm.env）
 set -euo pipefail
+EPHEMERAL="${EPHEMERAL:-0}"
 
 SESSION_TAR="${1:?session image tarball or --build}"
 SANDBOXD_TAR="${2:-}"
@@ -50,8 +54,14 @@ if [ "$(realpath "$REPO_DIR/scripts/sandbox-vm")" != "$(realpath /opt/cgm/script
 fi
 chmod 0755 /opt/cgm/scripts/sandbox-vm/*.sh
 install -m 0644 "$REPO_DIR"/deploy/sandbox/systemd/*.service "$REPO_DIR"/deploy/sandbox/systemd/*.timer /etc/systemd/system/
-install -m 0644 "$REPO_DIR/deploy/sandbox/sandboxd.example.yaml" /etc/cgm/sandboxd.yaml
 install -m 0644 "$REPO_DIR/deploy/sandbox/vm.env.example" /etc/cgm/vm.env
+[ -n "${HOST_VM_IP:-}" ] && sed -i "s/^HOST_VM_IP=.*/HOST_VM_IP=${HOST_VM_IP}/" /etc/cgm/vm.env
+if [ "$EPHEMERAL" = 1 ]; then
+  install -m 0644 "$REPO_DIR/deploy/sandbox/sandboxd.ephemeral.yaml" /etc/cgm/sandboxd.yaml
+  install -d -m 0711 /var/lib/cgm
+else
+  install -m 0644 "$REPO_DIR/deploy/sandbox/sandboxd.example.yaml" /etc/cgm/sandboxd.yaml
+fi
 
 # homes PD：首次启动时格式化（ext4 + project quota），挂载到 /var/lib/cgm
 cat > /etc/systemd/system/var-lib-cgm.mount <<'EOF'
@@ -94,5 +104,11 @@ EOF
 systemctl disable --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 
 systemctl daemon-reload
-systemctl enable var-lib-cgm.mount cgm-iptables.service cgm-homes-quota.timer cgm-sandboxd.service
+if [ "$EPHEMERAL" = 1 ]; then
+  rm -f /etc/systemd/system/var-lib-cgm.mount /etc/systemd/system/cgm-format-homes.service
+  systemctl daemon-reload
+  systemctl enable cgm-iptables.service cgm-sandboxd.service
+else
+  systemctl enable var-lib-cgm.mount cgm-iptables.service cgm-homes-quota.timer cgm-sandboxd.service
+fi
 echo "setup complete — 请编辑 /etc/cgm/vm.env 与 /etc/cgm/sandboxd.yaml，然后用 build-image.sh 制作镜像"

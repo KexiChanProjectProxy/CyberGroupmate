@@ -11,6 +11,10 @@ const sandboxdConfigSchema = z.object({
         z.object({ host: z.string().default("0.0.0.0"), port: z.number().int().min(0).max(65535) }),
         z.object({ socket: z.string().min(1) }),
     ]),
+    /**
+     * mTLS（可选）。省略时为纯 TCP：仅适用于同一 GCP VPC 内网，
+     * 访问控制由 VPC 防火墙（只放行 cgm-host tag）与 VM iptables 保证。
+     */
     tls: z.object({
         ca: z.string().min(1),
         cert: z.string().min(1),
@@ -19,7 +23,7 @@ const sandboxdConfigSchema = z.object({
         allowed_client_fingerprints: z.array(z.string()).default([]),
         /** 每行一个指纹的文件；SIGHUP 时重新读取 */
         allowed_clients_file: z.string().optional(),
-    }),
+    }).optional(),
     data_dir: z.string().min(1),
     launcher: z.enum(["process", "docker"]).default("docker"),
     docker: z.object({
@@ -28,8 +32,9 @@ const sandboxdConfigSchema = z.object({
         /** 容器 runtime（gVisor：runsc）；空字符串表示使用 dockerd 默认 */
         runtime: z.string().default("runsc"),
         user: z.string().regex(/^\d+:\d+$/).default("1000:1000"),
-        memory: z.string().default("2g"),
-        cpus: z.string().default("2"),
+        /** "0" 表示不限制（以 VM 规格为界） */
+        memory: z.coerce.string().default("2g"),
+        cpus: z.coerce.string().default("2"),
         pids_limit: z.number().int().min(16).default(512),
         tmpfs_size: z.string().default("512m"),
         nofile: z.number().int().min(64).default(4096),
@@ -63,6 +68,7 @@ export function normalizeFingerprint(value: string): string {
 }
 
 export function loadAllowedFingerprints(cfg: SandboxdConfig): Set<string> {
+    if (!cfg.tls) return new Set();
     const set = new Set(cfg.tls.allowed_client_fingerprints.map(normalizeFingerprint).filter(Boolean));
     if (cfg.tls.allowed_clients_file) {
         for (const line of readFileSync(cfg.tls.allowed_clients_file, "utf-8").split(/\r?\n/)) {

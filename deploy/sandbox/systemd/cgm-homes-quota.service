@@ -1,7 +1,6 @@
 [Unit]
 Description=CyberGroupmate sandbox per-home disk quota
-After=var-lib-cgm.mount
-Requires=var-lib-cgm.mount
+RequiresMountsFor=/var/lib/cgm
 
 [Service]
 Type=oneshot

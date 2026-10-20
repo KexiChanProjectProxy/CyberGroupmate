@@ -2,6 +2,8 @@
 # gcp-network.sh — 创建 VPC、子网与 sandbox VM 防火墙规则
 #
 # 用法：REGION=asia-east1 scripts/sandbox-vm/gcp-network.sh [<project>]
+#       临时 VM 模式：再加 SANDBOX_REGIONS="northamerica-northeast1 europe-west9 ..."，
+#       为每个候选 region 建子网 cgm-sandbox-<region>（10.20.N.0/24；全局 VPC 内网互通，无 NAT / PGA）
 #
 # 设计：
 # - 子网关闭 Private Google Access、不配置 Cloud NAT → sandbox VM 无任何出公网路径
@@ -25,6 +27,14 @@ g compute networks describe "$NETWORK" >/dev/null 2>&1 || \
 g compute networks subnets describe "$SUBNET" --region "$REGION" >/dev/null 2>&1 || \
   g compute networks subnets create "$SUBNET" --network "$NETWORK" --region "$REGION" \
     --range "$RANGE" --no-enable-private-ip-google-access
+
+n=0
+for r in ${SANDBOX_REGIONS:-}; do
+  n=$((n + 1))
+  g compute networks subnets describe "cgm-sandbox-$r" --region "$r" >/dev/null 2>&1 || \
+    g compute networks subnets create "cgm-sandbox-$r" --network "$NETWORK" --region "$r" \
+      --range "10.20.$n.0/24" --no-enable-private-ip-google-access
+done
 
 rule() {
   local name="$1"; shift

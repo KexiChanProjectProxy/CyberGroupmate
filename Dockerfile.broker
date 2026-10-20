@@ -1,0 +1,17 @@
+# Dockerfile.broker — sandbox VM broker（Cloud Run）
+#
+# 只包含 broker 需要的代码；依赖只有 zod 与 tsx。由 scripts/sandbox-vm/deploy-broker.sh 构建并部署。
+FROM node:22-slim
+
+WORKDIR /app
+RUN npm init -y >/dev/null \
+    && npm pkg set type=module \
+    && npm install --omit=dev --no-audit --no-fund zod@3.25.76 tsx@4.21.0 \
+    && npm cache clean --force
+
+COPY src/core/logger.ts ./src/core/logger.ts
+COPY src/sandbox/provisioner ./src/sandbox/provisioner
+
+USER node
+ENV NODE_ENV=production
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/sandbox/provisioner/broker-server.ts"]
