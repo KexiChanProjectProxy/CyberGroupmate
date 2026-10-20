@@ -181,7 +181,16 @@ export class SandboxBroker {
         if (!this.cfg.subnets[region]) throw new BrokerError(400, "region_not_allowed", `region ${region} 未配置子网`);
         if (!this.cfg.machineTypes.includes(machineType)) throw new BrokerError(400, "machine_type_not_allowed", `机型 ${machineType} 不在白名单`);
 
-        const existing = await this.gce.listInstancesByLabel(SANDBOX_LABEL.key, SANDBOX_LABEL.value);
+        let existing = await this.gce.listInstancesByLabel(SANDBOX_LABEL.key, SANDBOX_LABEL.value);
+        // daemon 每个 chat 同时只有一个会话：同一 chatKey 的旧 VM 必然是孤儿（daemon 重启 / 崩溃时没来得及删除）
+        const orphans = existing.filter((inst) => inst.labels?.["cgm-chat"] === chatKey);
+        for (const inst of orphans) {
+            await this.gce.deleteInstance(inst.zone, inst.name).catch((err) => log.warn("删除同 chat 旧 VM 失败", { name: inst.name, error: String(err) }));
+        }
+        if (orphans.length) {
+            log.info("已删除同 chat 的旧 sandbox VM", { count: orphans.length, chatKey: chatKey.slice(0, 8) });
+            existing = existing.filter((inst) => !orphans.includes(inst));
+        }
         if (existing.length >= this.cfg.maxInstances) throw new BrokerError(429, "capacity", `sandbox VM 数量已达上限 ${this.cfg.maxInstances}`);
 
         const zones = await this.zonesFor(region, machineType);

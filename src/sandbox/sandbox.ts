@@ -158,6 +158,8 @@ export class Sandbox extends EventEmitter {
     private remoteHome: string | null = null;
     /** 会话结束时释放远端资源（临时 VM） */
     private releaseRemote: (() => Promise<void>) | null = null;
+    /** 正在进行的远端资源释放（如删除 ephemeral VM）；stop() 等待它完成，避免进程退出时请求丢失 */
+    private pendingRelease: Promise<void> | null = null;
 
     /** 协议上限（host 侧强制，sandbox 视为不可信） */
     private readonly limits: ProtocolLimits;
@@ -421,7 +423,10 @@ export class Sandbox extends EventEmitter {
         const release = this.releaseRemote;
         this.releaseRemote = null;
         if (release) {
-            void release().catch((err) => log.warn("释放远端 sandbox 资源失败", { chatId: this.chatId, error: String(err) }));
+            const pending = release()
+                .catch((err) => log.warn("释放远端 sandbox 资源失败", { chatId: this.chatId, error: String(err) }))
+                .finally(() => { if (this.pendingRelease === pending) this.pendingRelease = null; });
+            this.pendingRelease = pending;
         }
         this.rl?.dispose();
         this.rl = null;
@@ -783,6 +788,11 @@ export class Sandbox extends EventEmitter {
         }
         this.handleSessionEnd("stopped");
         this.supervisor = null;
+        // 等远端资源释放完成（有上限）：进程关停时若不等，删除 VM 的请求会随进程退出丢失，VM 成为孤儿
+        const pendingRelease = this.pendingRelease;
+        if (pendingRelease) {
+            await Promise.race([pendingRelease, new Promise<void>((resolve) => setTimeout(resolve, 10_000).unref?.())]);
+        }
         this.stopping = false;
     }
 
