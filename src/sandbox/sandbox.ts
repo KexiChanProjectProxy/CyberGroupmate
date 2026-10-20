@@ -304,30 +304,29 @@ export class Sandbox extends EventEmitter {
             : buildShellPath(home, skillsDir, getAgentSkillScriptDirsIn(skillsDir), env.PATH);
         const readyTimeoutMs = this.runtime.readyTimeoutMs ?? (this.isRemote() ? 30_000 : 10_000);
 
-        const ready = new Promise<void>((resolve, reject) => {
-            const timer = setTimeout(() => {
-                this.readyWaiter = null;
-                reject(new Error(`Sandbox did not become ready within ${readyTimeoutMs}ms`));
-            }, readyTimeoutMs + 2_000);
-            this.readyWaiter = {
-                resolve: () => { clearTimeout(timer); resolve(); },
-                reject: (err) => { clearTimeout(timer); reject(err); },
-            };
-        });
-        // 若在等待前就失败（如远程握手被拒），避免未处理的 rejection
-        ready.catch(() => undefined);
+        // 就绪计时从传输建立后开始：远程（尤其 ephemeral VM）的开机 / 连接耗时由 openSession 自己的超时控制
+        const armReady = () => {
+            const ready = new Promise<void>((resolve, reject) => {
+                const timer = setTimeout(() => {
+                    this.readyWaiter = null;
+                    reject(new Error(`Sandbox did not become ready within ${readyTimeoutMs}ms`));
+                }, readyTimeoutMs + 2_000);
+                this.readyWaiter = {
+                    resolve: () => { clearTimeout(timer); resolve(); },
+                    reject: (err) => { clearTimeout(timer); reject(err); },
+                };
+            });
+            // 若在等待前就失败，避免未处理的 rejection
+            ready.catch(() => undefined);
+            return ready;
+        };
+        let ready: Promise<void>;
 
         if (this.isRemote()) {
             const remote = this.runtime.remote;
             if (!remote) throw new Error("sandbox.mode=remote 但未配置 remote transport");
-            let session: { socket: Duplex; home: string; release?: () => Promise<void> };
-            try {
-                session = await remote.openSession({ chatId: this.chatId, env, home, stateDir, shellPath });
-            } catch (err) {
-                this.readyWaiter?.reject(err instanceof Error ? err : new Error(String(err)));
-                this.readyWaiter = null;
-                throw err;
-            }
+            const session = await remote.openSession({ chatId: this.chatId, env, home, stateDir, shellPath });
+            ready = armReady();
             const socket = session.socket;
             this.remoteHome = session.home;
             this.releaseRemote = session.release ?? null;
@@ -340,6 +339,7 @@ export class Sandbox extends EventEmitter {
             });
             socket.once("close", () => this.handleSessionEnd("connection closed"));
         } else {
+            ready = armReady();
             const hostToSupervisor = new PassThrough();
             const supervisorToHost = new PassThrough();
             this.attachTransport(supervisorToHost, hostToSupervisor, () => {
