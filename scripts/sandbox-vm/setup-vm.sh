@@ -34,7 +34,11 @@ apt-get update
 apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io runsc
 
 install -m 0644 "$REPO_DIR/deploy/sandbox/daemon.json" /etc/docker/daemon.json
-systemctl restart docker
+# 刚安装的 docker 可能仍在首次启动：restart 会被取消，重试直到 dockerd 可用且已注册 runsc
+for i in $(seq 1 10); do
+  systemctl restart docker && docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q runsc && break
+  sleep 3
+done
 docker info --format '{{json .Runtimes}}' | grep -q runsc
 
 if [ "$SESSION_TAR" = "--build" ]; then
