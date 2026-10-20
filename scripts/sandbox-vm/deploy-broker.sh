@@ -31,6 +31,14 @@ g() { gcloud --project "$PROJECT" "$@"; }
 
 g services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com >/dev/null
 
+# 构建用的专用服务账号（不依赖权限宽泛的 Compute 默认服务账号）
+BUILDER_SA_NAME="${BUILDER_SA_NAME:-cgm-broker-builder}"
+BUILDER_SA="${BUILDER_SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
+g iam service-accounts describe "$BUILDER_SA" >/dev/null 2>&1 || \
+  g iam service-accounts create "$BUILDER_SA_NAME" --display-name "CyberGroupmate broker image builder"
+g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BUILDER_SA" \
+  --role roles/cloudbuild.builds.builder --condition=None >/dev/null
+
 g iam service-accounts describe "$BROKER_SA" >/dev/null 2>&1 || \
   g iam service-accounts create "$BROKER_SA_NAME" --display-name "CyberGroupmate sandbox VM broker"
 g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BROKER_SA" \
@@ -62,6 +70,7 @@ EOF
 
 g run deploy "$SERVICE" --region "$REGION" --source "$tmp" \
   --service-account "$BROKER_SA" \
+  --build-service-account "projects/$PROJECT/serviceAccounts/$BUILDER_SA" \
   --no-allow-unauthenticated \
   --env-vars-file "$tmp/env.yaml" \
   --cpu 1 --memory 512Mi --concurrency 20 --min-instances 0 --max-instances 3 --timeout 600 \

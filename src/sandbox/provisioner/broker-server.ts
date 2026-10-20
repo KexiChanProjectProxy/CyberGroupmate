@@ -13,7 +13,7 @@
  *   GET    /v1/sandboxes/:name?zone=Z                            → {name, zone, status, internalIp}
  *   DELETE /v1/sandboxes/:name?zone=Z                            → 204
  *   POST   /v1/gc                                                → {deleted: [...]}（Cloud Scheduler 定期调用）
- *   GET    /healthz
+ *   GET    /v1/health
  */
 
 import { randomBytes } from "node:crypto";
@@ -261,7 +261,8 @@ export function createBrokerServer(broker: SandboxBroker): Server {
         const url = new URL(req.url ?? "/", "http://broker");
         const path = url.pathname;
         try {
-            if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true });
+            // 注意：Cloud Run 前端保留以 z 结尾的路径（如 /healthz）
+            if (req.method === "GET" && path === "/v1/health") return send(res, 200, { ok: true });
             if (req.method === "POST" && path === "/v1/sandboxes") {
                 return send(res, 201, await broker.create(await readJson(req)));
             }

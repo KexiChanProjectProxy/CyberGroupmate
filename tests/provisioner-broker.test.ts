@@ -170,6 +170,7 @@ describe("sandbox broker", () => {
             assert.equal((await fetch(`${base}/v1/sandboxes`, { method: "POST", body: "x".repeat(20_000) })).status, 413);
             assert.equal((await fetch(`${base}/v1/sandboxes/${vm.name}?zone=${vm.zone}`, { method: "DELETE" })).status, 204);
             assert.equal((await fetch(`${base}/nope`)).status, 404);
+            assert.equal((await fetch(`${base}/v1/health`)).status, 200);
         } finally {
             server.close();
         }
