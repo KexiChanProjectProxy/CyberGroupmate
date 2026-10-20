@@ -299,6 +299,27 @@ describe("remote sandbox over mTLS", () => {
         assert.equal(sb.isAlive(), true);
     });
 
+    it("stop() waits for the remote release (e.g. deleting the ephemeral VM) to finish", async () => {
+        const base = runtimeFor();
+        const remote = base.remote!;
+        let released = false;
+        const runtime: SandboxRuntimeConfig = {
+            ...base,
+            remote: {
+                ...remote,
+                openSession: async (open) => ({
+                    ...(await remote.openSession(open)),
+                    release: () => new Promise<void>((resolve) => setTimeout(() => { released = true; resolve(); }, 1_000)),
+                }),
+            },
+        };
+        const sb = new Sandbox(undefined, "telegram:-9201", {}, [], runtime);
+        sandboxes.push(sb);
+        await sb.start();
+        await sb.stop();
+        assert.equal(released, true, "release must complete before stop() resolves");
+    });
+
     it("routes sandbox files to adapters through the host inbox and blocks host files", async () => {
         for (const prev of sandboxes.splice(0)) await prev.stop().catch(() => undefined);
         await waitFor(() => daemon.activeSessionCount === 0);

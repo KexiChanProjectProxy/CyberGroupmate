@@ -144,7 +144,18 @@ describe("sandbox broker", () => {
     it("enforces the instance cap", async () => {
         const { broker } = makeBroker({ maxInstances: 1 });
         await broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" });
-        await assert.rejects(broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" }), (e: unknown) => e instanceof BrokerError && e.status === 429);
+        await assert.rejects(broker.create({ chatKey: "e".repeat(32), region: "us-central1", machineType: "c4-standard-2" }), (e: unknown) => e instanceof BrokerError && e.status === 429);
+    });
+
+    it("deletes the same chat's older VMs (orphans) before creating a new one", async () => {
+        const { broker, compute } = makeBroker({ maxInstances: 2 });
+        const first = await broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" });
+        const other = await broker.create({ chatKey: "f".repeat(32), region: "us-central1", machineType: "c4-standard-2" });
+        // 上限 2 已满，但同 chat 的旧 VM 先被删除，不占名额
+        const second = await broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" });
+        assert.equal(compute.instances.has(first.name), false);
+        assert.equal(compute.instances.has(second.name), true);
+        assert.equal(compute.instances.has(other.name), true);
     });
 
     it("only reads and deletes labelled sandbox instances", async () => {
@@ -166,9 +177,9 @@ describe("sandbox broker", () => {
     it("gc deletes old or terminated sandbox VMs", async () => {
         const { broker, compute } = makeBroker();
         const fresh = await broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" });
-        const old = await broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" });
+        const old = await broker.create({ chatKey: "a".repeat(32), region: "us-central1", machineType: "c4-standard-2" });
         compute.instances.get(old.name)!.labels["cgm-created"] = String(Math.floor(Date.now() / 1000) - 26 * 3600);
-        const dead = await broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" });
+        const dead = await broker.create({ chatKey: "b".repeat(32), region: "us-central1", machineType: "c4-standard-2" });
         compute.instances.get(dead.name)!.status = "TERMINATED";
         const deleted = await broker.gc();
         assert.deepEqual(deleted.sort(), [old.name, dead.name].sort());
