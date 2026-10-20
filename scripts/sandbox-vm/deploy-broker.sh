@@ -31,6 +31,15 @@ IMAGE_FAMILY="${IMAGE_FAMILY:-cgm-sandbox-ephemeral}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 g() { gcloud --project "$PROJECT" "$@"; }
+# 新建的服务账号在 IAM 中可见需要一点时间（最终一致性）：绑定失败且提示不存在时重试
+retry_iam() {
+  local out
+  for i in $(seq 1 12); do
+    if out="$("$@" 2>&1)"; then return 0; fi
+    if echo "$out" | grep -qiE "does not exist|not found" && [ "$i" -lt 12 ]; then sleep 10; continue; fi
+    echo "$out" >&2; return 1
+  done
+}
 
 g services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com >/dev/null
 
@@ -39,14 +48,14 @@ BUILDER_SA_NAME="${BUILDER_SA_NAME:-cgm-broker-builder}"
 BUILDER_SA="${BUILDER_SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 g iam service-accounts describe "$BUILDER_SA" >/dev/null 2>&1 || \
   g iam service-accounts create "$BUILDER_SA_NAME" --display-name "CyberGroupmate broker image builder"
-g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BUILDER_SA" \
+retry_iam g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BUILDER_SA" \
   --role roles/cloudbuild.builds.builder --condition=None >/dev/null
 
 g iam service-accounts describe "$BROKER_SA" >/dev/null 2>&1 || \
   g iam service-accounts create "$BROKER_SA_NAME" --display-name "CyberGroupmate sandbox VM broker"
 # IAM Condition：instanceAdmin 只作用于 cgm-sbx-* 的实例与磁盘（共享项目中不能修改 / 删除其他 VM）
 BROKER_CONDITION='(resource.type != "compute.googleapis.com/Instance" || resource.name.extract("/instances/{name}").startsWith("cgm-sbx-")) && (resource.type != "compute.googleapis.com/Disk" || resource.name.extract("/disks/{name}").startsWith("cgm-sbx-"))'
-g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BROKER_SA" \
+retry_iam g projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BROKER_SA" \
   --role roles/compute.instanceAdmin.v1 \
   --condition="expression=${BROKER_CONDITION},title=cgm-sandbox-vms-only,description=Only cgm-sbx-* instances and disks" >/dev/null
 
@@ -84,15 +93,15 @@ g run deploy "$SERVICE" --region "$REGION" --source "$tmp" \
   --cpu 1 --memory 512Mi --concurrency 20 --min-instances 0 --max-instances 3 --timeout 600 \
   --quiet
 
-g run services add-iam-policy-binding "$SERVICE" --region "$REGION" \
-  --member "serviceAccount:$DAEMON_SA" --role roles/run.invoker >/dev/null
+retry_iam g run services add-iam-policy-binding "$SERVICE" --region "$REGION" \
+  --member "serviceAccount:$DAEMON_SA" --role roles/run.invoker
 
 URL="$(g run services describe "$SERVICE" --region "$REGION" --format 'value(status.url)')"
 
 if [ -n "${GC_SCHEDULE:-}" ]; then
   g services enable cloudscheduler.googleapis.com >/dev/null
-  g run services add-iam-policy-binding "$SERVICE" --region "$REGION" \
-    --member "serviceAccount:$BROKER_SA" --role roles/run.invoker >/dev/null
+  retry_iam g run services add-iam-policy-binding "$SERVICE" --region "$REGION" \
+    --member "serviceAccount:$BROKER_SA" --role roles/run.invoker
   g scheduler jobs describe "$SERVICE-gc" --location "$REGION" >/dev/null 2>&1 || \
     g scheduler jobs create http "$SERVICE-gc" --location "$REGION" --schedule "$GC_SCHEDULE" \
       --uri "$URL/v1/gc" --http-method POST --oidc-service-account-email "$BROKER_SA" --oidc-token-audience "$URL"
