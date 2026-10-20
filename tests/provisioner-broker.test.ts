@@ -96,6 +96,26 @@ describe("sandbox broker", () => {
         assert.equal(body.labels["cgm-chat"], CHAT);
     });
 
+    it("creates from an instance template while still forcing the isolation fields", async () => {
+        const compute = fakeCompute();
+        const cfg = loadBrokerConfigFromEnv({
+            BROKER_SUBNETS: JSON.stringify({ "us-central1": "cgm-sandbox-us-central1" }),
+            BROKER_ZONES: JSON.stringify({ "us-central1": ["us-central1-a"] }),
+            BROKER_MACHINE_TYPES: "c4-standard-2",
+            BROKER_INSTANCE_TEMPLATE: "cgm-sandbox-c4-spot",
+        }, "proj");
+        const broker = new SandboxBroker(cfg, new GceClient("proj", async () => "tok", compute.fetchImpl));
+        const vm = await broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" });
+        const insert = compute.calls.find((c) => c.startsWith("POST /compute/v1/projects/proj/zones/us-central1-a/instances"))!;
+        assert.match(decodeURIComponent(insert), /sourceInstanceTemplate=projects\/proj\/global\/instanceTemplates\/cgm-sandbox-c4-spot/);
+        const body = compute.instances.get(vm.name)!.body;
+        assert.equal(body.disks, undefined, "boot disk comes from the template");
+        assert.deepEqual(body.serviceAccounts, []);
+        assert.equal(body.networkInterfaces[0].accessConfigs, undefined);
+        assert.equal(body.scheduling.provisioningModel, "SPOT");
+        assert.equal(body.machineType, "zones/us-central1-a/machineTypes/c4-standard-2");
+    });
+
     it("validates every request field against its allowlists", async () => {
         const { broker, compute } = makeBroker();
         const bad: unknown[] = [

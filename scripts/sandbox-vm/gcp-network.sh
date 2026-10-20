@@ -55,5 +55,8 @@ rule cgm-sandbox-deny-ingress --direction INGRESS --priority 65000 --action DENY
   --rules all --source-ranges 0.0.0.0/0 --target-tags cgm-sandbox
 rule cgm-sandbox-deny-egress --direction EGRESS --priority 100 --action DENY \
   --rules all --destination-ranges 0.0.0.0/0 --target-tags cgm-sandbox
+# daemon / builder（tag cgm-admin）：只允许 IAP 的 SSH 入站（独立 VPC，不与其他网络互通）
+rule cgm-admin-allow-iap-ssh --direction INGRESS --priority 1000 --action ALLOW \
+  --rules tcp:22 --source-ranges 35.235.240.0/20 --target-tags cgm-admin
 
 echo "network ready: $NETWORK/$SUBNET ($RANGE)"

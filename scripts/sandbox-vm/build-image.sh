@@ -11,6 +11,8 @@
 #   BUILD_FROM_SOURCE=1  在 builder VM 上用当前仓库（git HEAD）构建两个镜像，无需本机 docker / 镜像仓库
 #   SPOT=1               builder 使用 Spot VM
 #   BUILDER_NETWORK=default
+#   BUILDER_SUBNET=cgm-subnet BUILDER_TAGS=cgm-admin BUILDER_IAP=1
+#                        把 builder 放进独立 VPC（需外网 IP 以安装软件包），经 IAP SSH 访问
 #   EPHEMERAL=1          制作 broker 按需创建的临时 VM 镜像（纯 TCP、无 homes PD）；需同时给 HOST_VM_IP
 #   IMAGE_FAMILY=cgm-sandbox-golden
 set -euo pipefail
@@ -52,16 +54,21 @@ fi
 
 builder_extra=()
 [ "$SPOT" = 1 ] && builder_extra+=(--provisioning-model=SPOT --instance-termination-action=DELETE)
+net_args=(--network "$BUILDER_NETWORK")
+[ -n "${BUILDER_SUBNET:-}" ] && net_args=(--network "$BUILDER_NETWORK" --subnet "$BUILDER_SUBNET")
+[ -n "${BUILDER_TAGS:-}" ] && net_args+=(--tags "$BUILDER_TAGS")
+ssh_args=()
+[ "${BUILDER_IAP:-0}" = 1 ] && ssh_args+=(--tunnel-through-iap)
 g compute instances create "$BUILDER" --zone "$ZONE" --machine-type "${BUILDER_MACHINE:-e2-standard-4}" \
-  --network "$BUILDER_NETWORK" \
+  "${net_args[@]}" \
   --image-family debian-12 --image-project debian-cloud --boot-disk-size 40GB \
   --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring "${builder_extra[@]}"
 for _ in $(seq 1 30); do
-  g compute ssh --zone "$ZONE" "$BUILDER" --command true >/dev/null 2>&1 && break
+  g compute ssh --zone "$ZONE" "${ssh_args[@]}" "$BUILDER" --command true >/dev/null 2>&1 && break
   sleep 10
 done
-g compute scp --zone "$ZONE" "${uploads[@]}" "$BUILDER:/tmp/"
-g compute ssh --zone "$ZONE" "$BUILDER" --command \
+g compute scp --zone "$ZONE" "${ssh_args[@]}" "${uploads[@]}" "$BUILDER:/tmp/"
+g compute ssh --zone "$ZONE" "${ssh_args[@]}" "$BUILDER" --command \
   "sudo mkdir -p /opt/cgm-src && sudo tar -C /opt/cgm-src -xzf /tmp/repo.tgz && \
    sudo REPO_DIR=/opt/cgm-src EPHEMERAL=${EPHEMERAL:-0} HOST_VM_IP=${HOST_VM_IP:-} bash /opt/cgm-src/scripts/sandbox-vm/setup-vm.sh $setup_args && \
    sudo rm -rf /tmp/*.tar.zst /tmp/repo.tgz /opt/cgm-src"

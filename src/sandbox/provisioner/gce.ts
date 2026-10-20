@@ -104,8 +104,8 @@ export class GceClient {
         if (first) throw new GceError(400, first.code, first.message);
     }
 
-    async insertInstance(zone: string, body: Record<string, unknown>): Promise<void> {
-        const op = await this.request<GceOperation>("POST", `/zones/${zone}/instances`, body);
+    async insertInstance(zone: string, body: Record<string, unknown>, query = ""): Promise<void> {
+        const op = await this.request<GceOperation>("POST", `/zones/${zone}/instances${query ? `?${query}` : ""}`, body);
         await this.waitZoneOperation(zone, op);
     }
 

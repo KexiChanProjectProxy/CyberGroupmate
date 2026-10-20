@@ -37,6 +37,11 @@ export interface BrokerConfig {
     zones?: Record<string, string[]>;
     machineTypes: string[];
     imageFamily: string;
+    /**
+     * 可选：GCE instance template（global）。设置后镜像 / 启动盘取自模板；
+     * 名称、机型、子网、无 SA、无外网 IP、Spot、Shielded VM 等安全相关字段仍由 broker 强制覆盖。
+     */
+    instanceTemplate?: string;
     /** golden image 所在项目（默认同 project） */
     imageProject?: string;
     networkTag: string;
@@ -58,6 +63,7 @@ export function loadBrokerConfigFromEnv(env: NodeJS.ProcessEnv, project: string)
         zones: json("BROKER_ZONES", undefined),
         machineTypes: (env.BROKER_MACHINE_TYPES ?? "c4-standard-2,c4-standard-4,c4-standard-8").split(",").map((s) => s.trim()).filter(Boolean),
         imageFamily: env.BROKER_IMAGE_FAMILY ?? "cgm-sandbox-golden",
+        instanceTemplate: env.BROKER_INSTANCE_TEMPLATE || undefined,
         imageProject: env.BROKER_IMAGE_PROJECT || undefined,
         networkTag: env.BROKER_NETWORK_TAG ?? "cgm-sandbox",
         diskGb: Number(env.BROKER_DISK_GB ?? 40),
@@ -93,8 +99,22 @@ export class SandboxBroker {
 
     constructor(readonly cfg: BrokerConfig, private readonly gce: GceClient) {}
 
+    /** 基于 instance template 创建时的查询参数 */
+    templateQuery(): string {
+        return this.cfg.instanceTemplate
+            ? `sourceInstanceTemplate=${encodeURIComponent(`projects/${this.cfg.project}/global/instanceTemplates/${this.cfg.instanceTemplate}`)}`
+            : "";
+    }
+
     buildInstanceBody(name: string, zone: string, region: string, machineType: string, chatKey: string): Record<string, unknown> {
         const imageProject = this.cfg.imageProject ?? this.cfg.project;
+        const body = this.buildFullInstanceBody(name, zone, region, machineType, chatKey, imageProject);
+        // 模板模式：启动盘（镜像 / 类型 / 大小）取自模板，其余字段仍显式覆盖
+        if (this.cfg.instanceTemplate) delete body.disks;
+        return body;
+    }
+
+    private buildFullInstanceBody(name: string, zone: string, region: string, machineType: string, chatKey: string, imageProject: string): Record<string, unknown> {
         return {
             name,
             machineType: `zones/${zone}/machineTypes/${machineType}`,
@@ -170,7 +190,7 @@ export class SandboxBroker {
         for (const zone of zones) {
             const name = `${SANDBOX_NAME_PREFIX}${randomBytes(8).toString("hex")}`;
             try {
-                await this.gce.insertInstance(zone, this.buildInstanceBody(name, zone, region, machineType, chatKey));
+                await this.gce.insertInstance(zone, this.buildInstanceBody(name, zone, region, machineType, chatKey), this.templateQuery());
                 log.info("sandbox VM 已创建", { name, zone, machineType, chatKey: chatKey.slice(0, 8) });
                 return { name, zone, region, machineType };
             } catch (err) {
