@@ -169,21 +169,30 @@ daemon VM（可信代码 + 公网）          Cloud Run: cgm-sandbox-broker     
 部署：
 
 ```bash
-# 1) VPC：host 子网 + 每个候选 region 一个 sandbox 子网（cgm-sandbox-<region>）
-REGION=us-central1 SANDBOX_REGIONS="northamerica-northeast1 europe-west9 us-central1" scripts/sandbox-vm/gcp-network.sh
+# 1) 独立 VPC（无 peering / VPN）：host 子网 + 每个候选 region 一个 sandbox 子网（cgm-sandbox-<region>）
+REGION=us-west2 SANDBOX_REGIONS="northamerica-northeast1 europe-west9 asia-southeast2 us-central1" \
+scripts/sandbox-vm/gcp-network.sh
 
-# 2) 临时 VM 镜像（HOST_VM_IP = daemon VM 内网 IP）
-ZONE=us-central1-b SPOT=1 BUILD_FROM_SOURCE=1 EPHEMERAL=1 HOST_VM_IP=10.10.0.2 \
-IMAGE_FAMILY=cgm-sandbox-ephemeral scripts/sandbox-vm/build-image.sh
+# 2) 常驻 daemon VM（e2-medium，固定内网 IP 10.10.0.2，专用服务账号 cgm-daemon，IAP-only SSH）
+ZONE=us-west2-a scripts/sandbox-vm/create-daemon-vm.sh
 
-# 3) broker（Cloud Run）；DAEMON_SA 为 daemon VM 的专用服务账号（不要用 Compute 默认服务账号）
-REGION=us-central1 DAEMON_SA=cgm-daemon@PROJECT.iam.gserviceaccount.com \
-SANDBOX_REGIONS="northamerica-northeast1 europe-west9 us-central1" GC_SCHEDULE="17 * * * *" \
+# 3) 临时 VM 镜像（builder 位于独立 VPC 内，经 IAP；HOST_VM_IP = daemon VM 内网 IP）
+ZONE=us-west2-a SPOT=1 BUILD_FROM_SOURCE=1 EPHEMERAL=1 HOST_VM_IP=10.10.0.2 IMAGE_FAMILY=cgm-sandbox-ephemeral \
+BUILDER_NETWORK=cgm-vpc BUILDER_SUBNET=cgm-subnet BUILDER_TAGS=cgm-admin BUILDER_IAP=1 \
+scripts/sandbox-vm/build-image.sh
+
+# 4) Spot VM instance template（C4 / Spot / 无 SA / 无外网 IP / gVNIC / Hyperdisk / maxRunDuration）
+SUBNET_REGION=northamerica-northeast1 scripts/sandbox-vm/create-spot-template.sh
+
+# 5) broker（Cloud Run）；基于 instance template 开机；DAEMON_SA 只获得 run.invoker
+REGION=us-west2 DAEMON_SA=cgm-daemon@PROJECT.iam.gserviceaccount.com \
+SANDBOX_REGIONS="northamerica-northeast1 europe-west9 asia-southeast2 us-central1" \
+INSTANCE_TEMPLATE=cgm-sandbox-c4-spot GC_SCHEDULE="17 * * * *" \
 scripts/sandbox-vm/deploy-broker.sh
 
-# 4) daemon config.yaml：sandbox.remote.provisioner（见 config.example.yaml）
+# 6) daemon config.yaml：sandbox.remote.provisioner（见 config.example.yaml）
 
-# 5) 验收（在 daemon VM 上）
+# 7) 验收（在 daemon VM 上）
 BROKER_URL=https://cgm-sandbox-broker-xxxx.run.app SANDBOX_REGIONS="northamerica-northeast1 europe-west9 us-central1" \
 npx tsx scripts/sandbox-vm/acceptance.ts
 ```
@@ -195,3 +204,14 @@ npx tsx scripts/sandbox-vm/acceptance.ts
 - broker 服务账号的 `roles/compute.instanceAdmin.v1` 带 IAM Condition，只作用于名称为 `cgm-sbx-*` 的实例与磁盘
   （`deploy-broker.sh` 自动设置）。已在共享项目中实测：可以创建 / 删除 `cgm-sbx-*`，
   创建其他名称的 VM、停止或删除项目中其他 VM 均被拒绝。若希望连只读权限也隔离，可把 sandbox 放进独立项目。
+
+### 当前部署（2026-10-20，项目 PROJECT）
+
+| 组件 | 资源 |
+|---|---|
+| VPC | `cgm-vpc`（独立，无 peering / VPN / Cloud NAT）；`cgm-subnet` 10.10.0.0/24（us-west2）；`cgm-sandbox-{northamerica-northeast1,europe-west9,asia-southeast2,us-central1}` 10.20.1–4.0/24 |
+| daemon VM | `cgm-daemon`，e2-medium，us-west2-a，10.10.0.2，SA `cgm-daemon@`（仅 broker 的 run.invoker） |
+| 镜像 / 模板 | image family `cgm-sandbox-ephemeral`；instance template `cgm-sandbox-c4-spot` |
+| broker | Cloud Run `cgm-sandbox-broker`（us-west2），SA `cgm-sandbox-broker@`（`compute.instanceAdmin.v1` + 条件 `cgm-sandbox-vms-only`）；Cloud Scheduler `cgm-sandbox-broker-gc` 每小时 |
+
+验收（daemon VM 上运行 `acceptance.ts`，BROKER_URL 模式）：19/19；VM 按当日价格开在 northamerica-northeast1，会话结束后全部删除。
