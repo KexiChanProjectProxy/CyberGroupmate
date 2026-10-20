@@ -14,7 +14,8 @@
 #   scripts/sandbox-vm/deploy-broker.sh [<project>]
 #
 # 可选：MACHINE_TYPES=c4-standard-2,c4-standard-4,c4-standard-8  IMAGE_FAMILY=cgm-sandbox-ephemeral
-#       MAX_INSTANCES=32  MAX_RUN_SECONDS=86400  GC_SCHEDULE="17 * * * *"（Cloud Scheduler 定期 gc；空则不建）
+#       MAX_INSTANCES=32  MAX_RUN_SECONDS=86400  GC_MAX_AGE_SECONDS=90000
+#       GC_SCHEDULE="17 * * * *"（Cloud Scheduler 定期 gc；空则不建）
 set -euo pipefail
 
 PROJECT="${1:-$(gcloud config get-value project 2>/dev/null)}"
@@ -69,6 +70,7 @@ BROKER_MACHINE_TYPES: '$MACHINE_TYPES'
 BROKER_IMAGE_FAMILY: '$IMAGE_FAMILY'
 BROKER_MAX_INSTANCES: '${MAX_INSTANCES:-32}'
 BROKER_MAX_RUN_SECONDS: '${MAX_RUN_SECONDS:-86400}'
+BROKER_GC_MAX_AGE_SECONDS: '${GC_MAX_AGE_SECONDS:-90000}'
 GOOGLE_CLOUD_PROJECT: '$PROJECT'
 EOF
 

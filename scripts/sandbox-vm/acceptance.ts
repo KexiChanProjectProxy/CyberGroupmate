@@ -26,6 +26,8 @@ import { createSandboxHostCallHandler } from "../../src/sandbox/host-call-handle
 import { loadConfig } from "../../src/core/config.js";
 import { remoteControlRequest } from "../../src/sandbox/transport/remote-transport.js";
 import { BrokerClient, metadataIdTokenProvider } from "../../src/sandbox/provisioner/broker-client.js";
+import { fetchCatalogSkus, rankRegions, SpotPriceBook } from "../../src/sandbox/provisioner/pricing.js";
+import { metadataTokenProvider } from "../../src/sandbox/provisioner/gce.js";
 
 const C = process.env.SANDBOX_TLS_DIR ?? "/run/cgm-tls";
 const endpointAddress = process.env.SANDBOX_ENDPOINT ?? "10.10.0.3:7443";
@@ -43,6 +45,11 @@ const brokerUrl = process.env.BROKER_URL;
 const ephemeral = !!brokerUrl;
 const broker = brokerUrl ? new BrokerClient(brokerUrl, metadataIdTokenProvider()) : null;
 const vmNames = new Set<string>();
+const createdRegions: string[] = [];
+const sandboxRegions = (process.env.SANDBOX_REGIONS ?? "").split(/\s+/).filter(Boolean);
+const machineType = process.env.SANDBOX_MACHINE_TYPE ?? "c4-standard-2";
+// 与 daemon 运行时相同的价格路径：每日 Billing Catalog → 本地排序
+const prices = brokerUrl ? new SpotPriceBook(join(skillsDir, "prices.json"), () => fetchCatalogSkus(metadataTokenProvider())) : null;
 const runtime = buildSandboxRuntime({
     mode: "remote", inheritHostEnv: false, skillsSyncBack: false, readyTimeoutMs: 60_000,
     remote: ephemeral
@@ -50,8 +57,8 @@ const runtime = buildSandboxRuntime({
             endpoints: [], connectTimeoutMs: 10_000, pingIntervalMs: 15_000,
             provisioner: {
                 brokerUrl: brokerUrl!,
-                regions: (process.env.SANDBOX_REGIONS ?? "").split(/\s+/).filter(Boolean),
-                sizes: { small: process.env.SANDBOX_MACHINE_TYPE ?? "c4-standard-2" }, defaultSize: "small",
+                regions: sandboxRegions,
+                sizes: { small: machineType }, defaultSize: "small",
                 port: 7443, vmReadyTimeoutMs: 420_000, priceCacheFile: join(skillsDir, "prices.json"),
             },
         }
@@ -59,10 +66,10 @@ const runtime = buildSandboxRuntime({
 }, skillsDir, broker ? {
     // 记录创建的 VM，用于最后确认已被删除
     broker: new Proxy(broker, { get(target, prop) {
-        if (prop === "create") return async (...a: [string, string, string]) => { const vm = await target.create(...a); vmNames.add(`${vm.zone}/${vm.name}`); return vm; };
+        if (prop === "create") return async (...a: [string, string, string]) => { const vm = await target.create(...a); vmNames.add(`${vm.zone}/${vm.name}`); createdRegions.push(vm.region); return vm; };
         const v = (target as any)[prop]; return typeof v === "function" ? v.bind(target) : v;
     } }),
-    prices: null,
+    prices,
 } : undefined);
 
 const results: Array<[string, boolean, string]> = [];
@@ -186,6 +193,11 @@ if (ephemeral) {
         if (remaining.size) await new Promise((r) => setTimeout(r, 10_000));
     }
     check("every per-chat VM deleted after its session", vmNames.size >= 4 && remaining.size === 0, `created=${vmNames.size} remaining=${[...remaining].join(",")}`);
+    // 价格路径：VM 应落在当前最便宜的候选 region（缺货时才会顺延）
+    const table = await prices!.get();
+    const ranked = table ? rankRegions(table, machineType, sandboxRegions) : [];
+    check("VMs placed in the cheapest region by daily spot price", ranked.length > 0 && createdRegions[0] === ranked[0].region,
+        `ranked=${ranked.map((r) => `${r.region}:$${r.hourlyUsd.toFixed(4)}`).join(" ")} used=${[...new Set(createdRegions)].join(",")}`);
 } else {
     const after = await remoteControlRequest(remote, remote.endpoints[0], { type: "health" });
     check("sessions reclaimed after disconnect", after.sessions === 0, JSON.stringify(after));
