@@ -25,12 +25,20 @@ g iam service-accounts describe "$DAEMON_SA" >/dev/null 2>&1 || \
 
 g compute instances describe "$NAME" --zone "$ZONE" >/dev/null 2>&1 && { echo "$NAME exists"; exit 0; }
 
-g compute instances create "$NAME" --zone "$ZONE" --machine-type "$MACHINE" \
-  --image-family debian-12 --image-project debian-cloud --boot-disk-size "${DISK_GB:-30}GB" --boot-disk-type pd-balanced \
-  --network-interface "subnet=$SUBNET,private-network-ip=$IP,stack-type=IPV4_ONLY" \
-  --tags cgm-host,cgm-admin \
-  --service-account "$DAEMON_SA" --scopes cloud-platform \
-  --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring \
-  --metadata enable-oslogin=TRUE,block-project-ssh-keys=TRUE
+# 新建的服务账号对 Compute 可见需要一点时间（IAM 最终一致性）：遇到 "not found" 时重试
+create() {
+  g compute instances create "$NAME" --zone "$ZONE" --machine-type "$MACHINE" \
+    --image-family debian-12 --image-project debian-cloud --boot-disk-size "${DISK_GB:-30}GB" --boot-disk-type pd-balanced \
+    --network-interface "subnet=$SUBNET,private-network-ip=$IP,stack-type=IPV4_ONLY" \
+    --tags cgm-host,cgm-admin \
+    --service-account "$DAEMON_SA" --scopes cloud-platform \
+    --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring \
+    --metadata enable-oslogin=TRUE,block-project-ssh-keys=TRUE
+}
+for i in $(seq 1 12); do
+  if out="$(create 2>&1)"; then echo "$out" | tail -2; break; fi
+  if echo "$out" | grep -q "of type 'serviceAccount' was not found" && [ "$i" -lt 12 ]; then sleep 10; continue; fi
+  echo "$out" >&2; exit 1
+done
 
 echo "daemon VM: $NAME ($IP) sa=$DAEMON_SA"
