@@ -278,6 +278,27 @@ describe("remote sandbox over mTLS", () => {
         assert.equal(sb.isAlive(), false);
     });
 
+    it("does not count slow session provisioning (e.g. VM boot) against the ready timeout", async () => {
+        const base = runtimeFor();
+        const remote = base.remote!;
+        // 就绪超时 8s（+2s 余量）；openSession 模拟 11s 的 VM 开机。计时若包含开机耗时就会失败
+        const runtime: SandboxRuntimeConfig = {
+            ...base,
+            readyTimeoutMs: 8_000,
+            remote: {
+                ...remote,
+                openSession: async (open) => {
+                    await new Promise((r) => setTimeout(r, 11_000));
+                    return remote.openSession(open);
+                },
+            },
+        };
+        const sb = new Sandbox(undefined, "telegram:-9101", {}, [], runtime);
+        sandboxes.push(sb);
+        await sb.start();
+        assert.equal(sb.isAlive(), true);
+    });
+
     it("routes sandbox files to adapters through the host inbox and blocks host files", async () => {
         for (const prev of sandboxes.splice(0)) await prev.stop().catch(() => undefined);
         await waitFor(() => daemon.activeSessionCount === 0);
