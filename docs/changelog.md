@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-21: 技术讨论只在卡住后参与
+
+- 线上人格与 topic triage / meta / proactive idle / dreaming 对齐：技术类话题默认旁观，只有讨论来回一段时间仍无结论或可执行结果才参与。
+- 悬空的单条提问不再进入信号池，也不再作为私聊追一句的理由。
+- 参与时把判断和步骤一次说完，避免来一条问题回一句话。
+
 ## 2026-10-20: CodeAct sandbox 隔离（remote 模式）+ host_call 安全加固
 
 ### 🆕 临时 VM 模式（每个 chat 一台 C4 Spot VM）
