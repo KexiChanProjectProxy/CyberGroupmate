@@ -1,5 +1,8 @@
 /**
- * llm/openai-responses.ts — OpenAI Responses API（官方 SDK）调用
+ * llm/openai-responses.ts — OpenAI Responses API 调用
+ *
+ * stream / non_stream 经 AI SDK（@ai-sdk/openai）；websocket 模式（连接内 previous_response_id 续链）
+ * AI SDK 不支持，仍走官方 openai SDK + ws。
  */
 
 import OpenAI from "openai";
@@ -10,17 +13,19 @@ import type {
     ResponseInput,
     ResponseInputItem,
     ResponseInputMessageContentList,
-    ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
 import WebSocket, { type RawData } from "ws";
 import type { LLMConfig } from "../config.js";
 import { createLogger } from "../logger.js";
+import type { ModelMessage, ProviderMetadata } from "ai";
+import { requireContent, runSdkRequest, truncateAtStop, usageFrom, userMessage } from "./ai-sdk.js";
 import { reasoningOriginKey } from "./reasoning-origin.js";
 import type { ChatMessage, LLMResponse } from "./types.js";
 
 const log = createLogger("openai-responses");
 
-type ResponsesUsage = NonNullable<Response["usage"]>;
+export { truncateAtStop };
+
 type ResponsesResult = Pick<Response, "output_text" | "usage" | "output"> & { id?: string };
 
 interface WebSocketPendingResponse {
@@ -54,6 +59,11 @@ export async function callOpenAIResponses(
     stop?: string[],
     signal?: AbortSignal,
 ): Promise<LLMResponse> {
+    const requestMode = config.responsesRequestMode ?? "non_stream";
+    if (requestMode !== "websocket") {
+        return callOpenAIResponsesHttp(messages, config, model, temperature, maxTokens, thinkingLevel, prefill, stop, signal);
+    }
+
     const client = new OpenAI({
         apiKey: config.apiKey,
         baseURL: config.baseUrl,
@@ -87,38 +97,29 @@ export async function callOpenAIResponses(
         ...(config.omit_temperature ? {} : { temperature }),
         ...(config.omit_max_output_tokens ? {} : { max_output_tokens: maxTokens }),
         ...(reasoningEffort ? { reasoning: { effort: reasoningEffort as ReasoningEffort } } : {}),
-        ...(stop && stop.length > 0 ? { stop } : {}),
+        // Responses API 没有 stop 参数（官方与兼容网关都会 400 unknown parameter），stop 在下方客户端截断
         ...(config.extraBody ?? {}),
     };
 
-    const requestMode = config.responsesRequestMode ?? "non_stream";
     let websocketSessionId: string | undefined;
     let response: ResponsesResult;
-    if (requestMode === "websocket") {
-        try {
-            const result = await callOpenAIResponsesWebSocket(messages, config, requestBody, originKey, prefill, signal);
-            websocketSessionId = result.sessionId;
-            response = result.response;
-        } catch (error) {
-            if (signal?.aborted || !isRetryableResponsesWebSocketError(error)) throw error;
+    try {
+        const result = await callOpenAIResponsesWebSocket(messages, config, requestBody, originKey, prefill, signal);
+        websocketSessionId = result.sessionId;
+        response = result.response;
+    } catch (error) {
+        if (signal?.aborted || !isRetryableResponsesWebSocketError(error)) throw error;
 
-            // Responses 的 encrypted reasoning 同样能通过普通 HTTP 往返；WS 只负责
-            // 连接内 previous_response_id 续链。上游 WS 代理繁忙时直接用完整 input
-            // 降级到 HTTP，既保留 reasoning，也避免反复撞同一个 WS 入口。
-            log.warn("Responses WebSocket unavailable; falling back to HTTP", {
-                error: error instanceof Error ? error.message : String(error),
-            });
-            response = await client.responses.create(requestBody, { signal }) as ResponsesResult;
-        }
-    } else if (requestMode === "stream") {
-        response = await collectResponseFromStream(
-            await client.responses.create({ ...requestBody, stream: true }, { signal }),
-        );
-    } else {
+        // Responses 的 encrypted reasoning 同样能通过普通 HTTP 往返；WS 只负责
+        // 连接内 previous_response_id 续链。上游 WS 代理繁忙时直接用完整 input
+        // 降级到 HTTP，既保留 reasoning，也避免反复撞同一个 WS 入口。
+        log.warn("Responses WebSocket unavailable; falling back to HTTP", {
+            error: error instanceof Error ? error.message : String(error),
+        });
         response = await client.responses.create(requestBody, { signal }) as ResponsesResult;
     }
 
-    const content = response.output_text ?? "";
+    const content = truncateAtStop(response.output_text ?? "", stop);
     const reasoningItems = response.output
         ?.filter((item) => item.type === "reasoning")
         .map((item) => ({ ...item } as unknown as Record<string, unknown>));
@@ -148,6 +149,111 @@ export async function callOpenAIResponses(
             }
             : undefined,
     };
+}
+
+/** stream / non_stream：经 @ai-sdk/openai 的 Responses 模型（store: false，reasoning item 以 encrypted_content 往返） */
+async function callOpenAIResponsesHttp(
+    messages: ChatMessage[],
+    config: LLMConfig,
+    model: string,
+    temperature: number,
+    maxTokens: number,
+    thinkingLevel?: string,
+    prefill?: string,
+    stop?: string[],
+    signal?: AbortSignal,
+): Promise<LLMResponse> {
+    const originKey = reasoningOriginKey(config, model);
+    const instructions = messages
+        .filter(m => m.role === "system")
+        .map(m => m.content.trim())
+        .filter(Boolean)
+        .join("\n\n");
+
+    const input: ModelMessage[] = [];
+    for (const m of messages) {
+        if (m.role === "system") continue;
+        if (m.role === "user") {
+            input.push(userMessage(m));
+            continue;
+        }
+        // 只回传本 profile 产出的 reasoning item：别的 profile 的 item id 会被上游判为非法格式
+        const items = m.reasoning?.provider === "openai_responses" && m.reasoning.originKey === originKey
+            ? m.reasoning.items
+            : [];
+        input.push(items.length
+            ? { role: "assistant", content: [...items.flatMap(reasoningItemToParts), { type: "text", text: m.content }] }
+            : { role: "assistant", content: m.content });
+    }
+    if (prefill) input.push({ role: "assistant", content: prefill });
+
+    const reasoningEffort = toReasoningEffort(thinkingLevel);
+    const result = await runSdkRequest({
+        protocol: "responses",
+        config,
+        model,
+        messages: input,
+        // 推理模型不接受 temperature（SDK 也会剔除并告警）
+        temperature: config.omit_temperature || reasoningEffort ? undefined : temperature,
+        maxOutputTokens: config.omit_max_output_tokens ? undefined : maxTokens,
+        stopSequences: stop,
+        providerOptions: {
+            openai: {
+                store: false,
+                // 官方当前会在 stateless response 中默认返回 encrypted_content，显式 include
+                // 同时兼容尚未跟进该默认行为的 Responses 网关。
+                include: ["reasoning.encrypted_content"],
+                ...(instructions ? { instructions } : {}),
+                // SDK 按模型名判断是否为推理模型；网关模型名（如 opencode/…）识别不了，指定了 effort 就按推理模型发送
+                ...(reasoningEffort ? { reasoningEffort, forceReasoning: true } : {}),
+            },
+        },
+        signal,
+    }, config.responsesRequestMode === "stream");
+
+    // Responses API 没有 stop 参数：runSdkRequest 已在客户端按 stop 截断
+    const content = requireContent(result.text, model);
+    const items = reasoningPartsToItems(result.reasoning);
+    const usage = usageFrom("responses", result);
+
+    return {
+        content,
+        reasoning: items.length
+            ? { provider: "openai_responses", items, originKey, tokenCount: usage?.reasoningTokens }
+            : undefined,
+        usage,
+    };
+}
+
+/** 持久化的 `type: reasoning` item → SDK reasoning part（每段 summary 一个 part，共用 itemId） */
+function reasoningItemToParts(item: Record<string, unknown>) {
+    const summaries = (item.summary as Array<{ text?: string }> | undefined ?? [])
+        .map(s => s.text ?? "")
+        .filter(Boolean);
+    const providerOptions = {
+        openai: {
+            ...(typeof item.id === "string" ? { itemId: item.id } : {}),
+            ...(item.encrypted_content != null ? { reasoningEncryptedContent: String(item.encrypted_content) } : {}),
+        },
+    };
+    return (summaries.length ? summaries : [""]).map(text => ({ type: "reasoning" as const, text, providerOptions }));
+}
+
+/** SDK reasoning part → 与 Responses API 原样一致的 reasoning item（按 itemId 合并 summary） */
+function reasoningPartsToItems(parts: Array<{ text: string; providerMetadata?: ProviderMetadata }>): Array<Record<string, unknown>> {
+    const items = new Map<string, Record<string, unknown> & { summary: Array<Record<string, unknown>> }>();
+    for (const part of parts) {
+        const meta = part.providerMetadata?.openai as { itemId?: string; reasoningEncryptedContent?: string | null } | undefined;
+        if (!meta?.itemId) continue;
+        let item = items.get(meta.itemId);
+        if (!item) {
+            item = { id: meta.itemId, type: "reasoning", summary: [] };
+            items.set(meta.itemId, item);
+        }
+        if (part.text) item.summary.push({ type: "summary_text", text: part.text });
+        if (meta.reasoningEncryptedContent != null) item.encrypted_content = meta.reasoningEncryptedContent;
+    }
+    return [...items.values()];
 }
 
 /**
@@ -448,49 +554,4 @@ function toReasoningEffort(value?: string): ReasoningEffortExtended | undefined 
         return value;
     }
     return undefined;
-}
-
-export async function collectResponseFromStream(stream: AsyncIterable<ResponseStreamEvent>): Promise<ResponsesResult> {
-    const asyncIterator = stream[Symbol.asyncIterator];
-    if (!asyncIterator) {
-        throw new Error("OpenAI Responses stream mode did not return an async iterable");
-    }
-
-    let outputText = "";
-    let usage: ResponsesUsage | undefined;
-    let output: Response["output"] = [];
-    let completed = false;
-    try {
-        for await (const event of stream) {
-            if (event.type === "response.output_text.delta") {
-                outputText += event.delta;
-            }
-            if (event.type === "response.output_item.done" && event.item.type === "reasoning") {
-                output.push(event.item);
-            }
-            if (event.type === "response.completed") {
-                completed = true;
-                if (event.response.output_text) {
-                    outputText = event.response.output_text;
-                }
-                usage = event.response.usage ?? usage;
-                const completedOutput = event.response.output ?? [];
-                const completedHasReasoning = completedOutput.some(item => item.type === "reasoning");
-                output = completedHasReasoning
-                    ? completedOutput
-                    : [...output, ...completedOutput];
-            }
-        }
-    } catch (err) {
-        if (completed && isPrematureCloseError(err)) {
-            return { output_text: outputText, usage, output };
-        }
-        throw err;
-    }
-
-    return { output_text: outputText, usage, output };
-}
-
-function isPrematureCloseError(err: unknown): boolean {
-    return err instanceof Error && err.message.includes("Premature close");
 }

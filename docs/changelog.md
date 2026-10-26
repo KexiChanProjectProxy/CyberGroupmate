@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-24: LLM provider 改用 AI SDK
+
+- Anthropic Messages / OpenAI Responses / OpenAI 兼容 Chat Completions 改经 AI SDK（`ai` 7、`@ai-sdk/anthropic`、`@ai-sdk/openai`、`@ai-sdk/openai-compatible`，精确版本锁定）调用，
+  替换手写的 HTTP / SSE 客户端；共用逻辑在 `src/core/llm/ai-sdk.ts`。`ProviderCallFn` 签名、`LLMReasoning` 持久化格式与错误文本不变。
+- Responses 的 `websocket` 请求模式 AI SDK 不支持，仍走官方 openai SDK + ws；Google 仍用 `@google/genai`。
+- 修复：Responses API 没有 `stop` 参数，旧实现照发导致官方 / 兼容网关 400 `unknown parameter stop`（meta 会话全部失败）；现在只在客户端截断。
+  其余协议在发送 `stop` 的同时也在客户端截断（部分网关忽略 `stop`）。
+- 指定了 reasoning effort 的 Responses 请求按推理模型发送（不带 temperature）；网关模型名 SDK 识别不了，不再依赖模型名判断。
+
 ## 2026-10-21: 技术讨论只在卡住后参与
 
 - 线上人格与 topic triage / meta / proactive idle / dreaming 对齐：技术类话题默认旁观，只有讨论来回一段时间仍无结论或可执行结果才参与。

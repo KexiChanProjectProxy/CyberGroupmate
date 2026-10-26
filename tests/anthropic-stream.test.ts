@@ -32,6 +32,22 @@ async function startServer(handler: (res: ServerResponse, body: Record<string, a
     } satisfies LLMConfig;
 }
 
+/** 完整的 Messages API 响应（SDK 会按 schema 校验） */
+function message(content: unknown[], extra: Record<string, unknown> = {}) {
+    return JSON.stringify({
+        id: "msg_test", type: "message", role: "assistant", model: "test-model",
+        content, stop_reason: "end_turn", stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 }, ...extra,
+    });
+}
+
+function messageStart(usage: Record<string, unknown>) {
+    return sse("message_start", { message: {
+        id: "msg_test", type: "message", role: "assistant", model: "test-model",
+        content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0, ...usage },
+    } });
+}
+
 function sse(type: string, data: Record<string, unknown>) {
     return `event: ${type}\r\ndata: ${JSON.stringify({ type, ...data })}\r\n\r\n`;
 }
@@ -43,7 +59,7 @@ describe("Anthropic Messages stream", () => {
             request = body;
             res.writeHead(200, { "content-type": "text/event-stream" });
             const bytes = Buffer.from(
-                sse("message_start", { message: { usage: { input_tokens: 20, cache_read_input_tokens: 5, output_tokens: 1 } } })
+                messageStart({ input_tokens: 20, cache_read_input_tokens: 5, output_tokens: 1 })
                 + sse("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "", signature: "" } })
                 + sse("content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "想" } })
                 + sse("content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "一想" } })
@@ -82,13 +98,14 @@ describe("Anthropic Messages stream", () => {
     it("surfaces stream error events and premature ends", async () => {
         const failing = await startServer((res) => {
             res.writeHead(200, { "content-type": "text/event-stream" });
-            res.end(sse("message_start", { message: { usage: {} } }) + sse("error", { error: { type: "overloaded_error", message: "Overloaded" } }));
+            res.end(messageStart({}) + sse("error", { error: { type: "overloaded_error", message: "Overloaded" } }));
         }, "stream");
-        await assert.rejects(callAnthropic([{ role: "user", content: "hi" }], failing, failing.model, 1, 1024), /overloaded_error Overloaded/);
+        await assert.rejects(callAnthropic([{ role: "user", content: "hi" }], failing, failing.model, 1, 1024),
+            (err: Error) => /overloaded_error/.test(err.message) && /Overloaded/.test(err.message));
 
         const truncated = await startServer((res) => {
             res.writeHead(200, { "content-type": "text/event-stream" });
-            res.end(sse("message_start", { message: { usage: {} } })
+            res.end(messageStart({})
                 + sse("content_block_start", { index: 0, content_block: { type: "text", text: "" } })
                 + sse("content_block_delta", { index: 0, delta: { type: "text_delta", text: "half" } }));
         }, "stream");
@@ -100,10 +117,10 @@ describe("Anthropic Messages stream", () => {
         const profile = await startServer((res, body) => {
             request = body;
             res.writeHead(200, { "content-type": "application/json" });
-            res.end(JSON.stringify({ content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }));
+            res.end(message([{ type: "text", text: "ok" }]));
         });
         const result = await callAnthropic([{ role: "user", content: "hi" }], profile, profile.model, 1, 1024);
-        assert.equal(request.stream, false);
+        assert.notEqual(request.stream, true);
         assert.equal(result.content, "ok");
     });
 });
@@ -120,7 +137,7 @@ describe("Anthropic thinking signature fallback", () => {
                 return;
             }
             res.writeHead(200, { "content-type": "application/json" });
-            res.end(JSON.stringify({ content: [{ type: "text", text: "recovered" }] }));
+            res.end(message([{ type: "text", text: "recovered" }]));
         });
         const thinking = { type: "thinking", thinking: "old", signature: "stale" };
         const result = await callAnthropic([
@@ -131,7 +148,7 @@ describe("Anthropic thinking signature fallback", () => {
         assert.equal(result.content, "recovered");
         assert.equal(requests.length, 2);
         assert.deepEqual(requests[0].messages[1].content, [thinking, { type: "text", text: "first answer" }]);
-        assert.equal(requests[1].messages[1].content, "first answer");
+        assert.deepEqual(requests[1].messages[1].content, [{ type: "text", text: "first answer" }]);
     });
 
     it("does not retry other 400 errors", async () => {
@@ -154,7 +171,7 @@ describe("Anthropic refusal", () => {
     it("throws a non-empty-response error with the category so callers fall back instead of retrying", async () => {
         const profile = await startServer((res) => {
             res.writeHead(200, { "content-type": "application/json" });
-            res.end(JSON.stringify({ content: [], stop_reason: "refusal", stop_details: { type: "refusal", category: "some_category" } }));
+            res.end(message([], { stop_reason: "refusal", stop_details: { type: "refusal", category: "some_category" } }));
         });
         await assert.rejects(
             callAnthropic([{ role: "user", content: "hi" }], profile, profile.model, 1, 1024),
@@ -165,7 +182,7 @@ describe("Anthropic refusal", () => {
     it("detects refusals in stream mode", async () => {
         const profile = await startServer((res) => {
             res.writeHead(200, { "content-type": "text/event-stream" });
-            res.end(sse("message_start", { message: { usage: {} } })
+            res.end(messageStart({})
                 + sse("message_delta", { delta: { stop_reason: "refusal", stop_details: { type: "refusal", category: "c2" } }, usage: { output_tokens: 0 } })
                 + sse("message_stop", {}));
         }, "stream");

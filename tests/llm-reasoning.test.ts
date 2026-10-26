@@ -37,6 +37,9 @@ async function startServer(
     return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
 }
 
+/** Messages API 必填字段（SDK 按 schema 校验响应） */
+const MESSAGE_FIELDS = { id: "msg_test", type: "message", role: "assistant", model: "reasoning-model", stop_reason: "end_turn", stop_sequence: null };
+
 function config(provider: LLMConfig["provider"], baseUrl: string): LLMConfig {
     return {
         provider,
@@ -120,6 +123,7 @@ describe("native reasoning round-trip", () => {
     it("round-trips Anthropic signed thinking blocks", async () => {
         const thinkingBlock = { type: "thinking", thinking: "private", signature: "signed-state" };
         const { baseUrl, requests } = await startServer((_body, index) => ({
+            ...MESSAGE_FIELDS,
             content: index === 0
                 ? [thinkingBlock, { type: "text", text: "first answer" }]
                 : [{ type: "text", text: "second answer" }],
@@ -267,6 +271,7 @@ describe("cross-profile reasoning isolation", () => {
 
     it("drops Anthropic thinking blocks signed by another profile", async () => {
         const { baseUrl, requests } = await startServer(() => ({
+            ...MESSAGE_FIELDS,
             content: [{ type: "text", text: "answer" }],
             usage: { input_tokens: 10, output_tokens: 12 },
         }));
@@ -286,7 +291,7 @@ describe("cross-profile reasoning isolation", () => {
             { role: "user", content: "second" },
         ], profile, profile.model, 1, 1024, "high");
 
-        assert.deepEqual(requests[0].messages[1], { role: "assistant", content: "first answer" });
+        assert.deepEqual(requests[0].messages[1], { role: "assistant", content: [{ type: "text", text: "first answer" }] });
     });
 
     it("drops Chat reasoning_content produced by another profile", async () => {

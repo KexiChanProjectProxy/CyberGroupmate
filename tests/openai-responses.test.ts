@@ -7,8 +7,8 @@ import type { LLMConfig } from "../src/core/config.js";
 import {
     callOpenAIResponses,
     closeOpenAIResponsesWebSockets,
-    collectResponseFromStream,
     isRetryableResponsesWebSocketError,
+    truncateAtStop,
 } from "../src/core/llm/openai-responses.js";
 import { reasoningOriginKey } from "../src/core/llm/reasoning-origin.js";
 import type { ChatMessage } from "../src/core/llm/types.js";
@@ -96,72 +96,121 @@ function websocketConfig(baseUrl: string): LLMConfig {
     };
 }
 
-describe("OpenAI Responses stream collection", () => {
+/** Responses SSE：按序写出事件；destroyAfter 时写完后直接断开 socket（模拟网关在完成事件后 / 前断连） */
+async function startSseServer(events: Array<Record<string, unknown>>, destroyAfter = false) {
+    const server = createServer((req, res) => {
+        req.resume();
+        req.on("end", () => {
+            res.writeHead(200, { "content-type": "text/event-stream" });
+            for (const event of events) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+            if (destroyAfter) setImmediate(() => res.socket?.destroy());
+            else res.end();
+        });
+    });
+    httpServers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const profile: LLMConfig = {
+        ...websocketConfig(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`),
+        responsesRequestMode: "stream",
+    };
+    return profile;
+}
+
+const created = { type: "response.created", response: { id: "resp_s", created_at: 1, model: "reasoning-model", service_tier: null } };
+const messageItem = { id: "msg_s", type: "message", role: "assistant", status: "completed", content: [] as unknown[] };
+const textEvents = (text: string) => [
+    { type: "response.output_item.added", output_index: 1, item: { ...messageItem, status: "in_progress" } },
+    { type: "response.output_text.delta", item_id: "msg_s", output_index: 1, content_index: 0, delta: text.slice(0, 3), logprobs: [] },
+    { type: "response.output_text.delta", item_id: "msg_s", output_index: 1, content_index: 0, delta: text.slice(3), logprobs: [] },
+];
+const completed = (usage: Record<string, unknown> | null) => ({
+    type: "response.completed",
+    response: { id: "resp_s", created_at: 1, model: "reasoning-model", status: "completed", incomplete_details: null, service_tier: null, output: [], usage },
+});
+
+describe("OpenAI Responses stream mode", () => {
     it("keeps reasoning output_item.done when completed output omits it", async () => {
-        const reasoningItem = {
-            id: "rs_1",
-            type: "reasoning",
-            summary: [],
-            encrypted_content: "opaque",
-        };
-        async function* stream() {
-            yield { type: "response.output_item.done", item: reasoningItem };
-            yield {
-                type: "response.completed",
-                response: {
-                    output_text: "answer",
-                    output: [{ type: "message", role: "assistant", content: [] }],
-                    usage: null,
-                },
-            };
-        }
-
-        const result = await collectResponseFromStream(stream() as any);
-
-        assert.deepEqual(result.output, [
-            reasoningItem,
-            { type: "message", role: "assistant", content: [] },
+        const reasoningItem = { id: "rs_1", type: "reasoning", summary: [], encrypted_content: "opaque" };
+        const profile = await startSseServer([
+            created,
+            { type: "response.output_item.added", output_index: 0, item: { id: "rs_1", type: "reasoning", summary: [], encrypted_content: null } },
+            { type: "response.output_item.done", output_index: 0, item: reasoningItem },
+            ...textEvents("answer"),
+            completed(null),
         ]);
+
+        const result = await callOpenAIResponses([{ role: "user", content: "q" }], profile, profile.model, 1, 1024, "high");
+
+        assert.equal(result.content, "answer");
+        assert.deepEqual(result.reasoning?.provider === "openai_responses" && result.reasoning.items, [reasoningItem]);
     });
 
     it("accepts Premature close after response.completed", async () => {
-        async function* stream() {
-            yield { type: "response.output_text.delta", delta: "hel" };
-            yield { type: "response.output_text.delta", delta: "lo" };
-            yield {
-                type: "response.completed",
-                response: {
-                    output_text: "hello",
-                    usage: {
-                        input_tokens: 1,
-                        output_tokens: 2,
-                        total_tokens: 3,
-                    },
-                },
-            };
-            throw new Error("Premature close");
-        }
+        const profile = await startSseServer([
+            created,
+            ...textEvents("hello"),
+            completed({ input_tokens: 1, output_tokens: 2, total_tokens: 3 }),
+        ], true);
 
-        const result = await collectResponseFromStream(stream() as any);
+        const result = await callOpenAIResponses([{ role: "user", content: "q" }], profile, profile.model, 1, 1024);
 
-        assert.equal(result.output_text, "hello");
-        assert.deepEqual(result.usage, {
-            input_tokens: 1,
-            output_tokens: 2,
-            total_tokens: 3,
-        });
+        assert.equal(result.content, "hello");
+        assert.equal(result.usage?.promptTokens, 1);
+        assert.equal(result.usage?.completionTokens, 2);
     });
 
     it("does not accept Premature close before response.completed", async () => {
-        async function* stream() {
-            yield { type: "response.output_text.delta", delta: "partial" };
-            throw new Error("Premature close");
-        }
+        const profile = await startSseServer([created, ...textEvents("partial")], true);
 
         await assert.rejects(
-            collectResponseFromStream(stream() as any),
-            /Premature close/,
+            callOpenAIResponses([{ role: "user", content: "q" }], profile, profile.model, 1, 1024),
+            /ended before completion/,
         );
+    });
+});
+
+describe("OpenAI Responses stop sequences", () => {
+    it("never sends stop (not a Responses parameter) and truncates client-side", async () => {
+        const bodies: Array<Record<string, any>> = [];
+        const server = createServer((req, res) => {
+            let raw = "";
+            req.on("data", chunk => { raw += chunk; });
+            req.on("end", () => {
+                bodies.push(JSON.parse(raw) as Record<string, any>);
+                res.writeHead(200, { "content-type": "application/json" });
+                res.end(JSON.stringify({
+                    id: "resp_stop",
+                    object: "response",
+                    status: "completed",
+                    output_text: "```js\nrun()\n```\n[MetaSandbox observation] fabricated",
+                    output: [{
+                        id: "msg_stop",
+                        type: "message",
+                        role: "assistant",
+                        status: "completed",
+                        content: [{ type: "output_text", text: "```js\nrun()\n```\n[MetaSandbox observation] fabricated", annotations: [] }],
+                    }],
+                }));
+            });
+        });
+        httpServers.push(server);
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const profile = { ...websocketConfig(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`), responsesRequestMode: "non_stream" as const };
+
+        const result = await callOpenAIResponses(
+            [{ role: "user", content: "go" }],
+            profile, profile.model, 1, 1024, undefined, undefined, ["[MetaSandbox observation]"],
+        );
+
+        assert.equal(bodies.length, 1);
+        assert.equal("stop" in bodies[0], false);
+        assert.equal(result.content, "```js\nrun()\n```\n");
+    });
+
+    it("truncates at the earliest of several stop sequences", () => {
+        assert.equal(truncateAtStop("a STOP2 b STOP1 c", ["STOP1", "STOP2"]), "a ");
+        assert.equal(truncateAtStop("no stop here", ["X"]), "no stop here");
+        assert.equal(truncateAtStop("keep", undefined), "keep");
     });
 });
 
