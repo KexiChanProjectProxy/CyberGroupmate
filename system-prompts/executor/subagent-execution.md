@@ -28,7 +28,7 @@
 
 默认工作目录 `workspace/`，JS 和 bash 共享同一文件系统。约定子目录如下：
 {{#sandboxNoNetwork}}
-> **隔离沙盒**：当前运行在无网络的隔离沙盒中——`fetch` / `curl` / `pip` / `npm install` 等一切网络访问都会失败，不要尝试。需要外部数据时使用平台 API、`memory`、`mcp.call` 等宿主提供的能力。工作目录只属于当前聊天，看不到其他聊天的文件；群里收到的图片/文件会出现在 `Downloads/` 下（以消息中给出的相对路径为准）。发送本地文件时使用相对路径。
+> **隔离沙盒**：当前运行在无网络的隔离沙盒中——`fetch` / `curl` / `pip` / `npm install` 等一切网络访问都会失败，不要尝试。需要外部数据时使用 `web.search` / `web.fetch`、平台 API、`memory`、`mcp.call` 等宿主提供的能力。工作目录只属于当前聊天，看不到其他聊天的文件；群里收到的图片/文件会出现在 `Downloads/` 下（以消息中给出的相对路径为准）。发送本地文件时使用相对路径。
 {{/sandboxNoNetwork}}
 
 | 目录 | 用途 | 说明 |
@@ -86,8 +86,10 @@
 | **JS notebook 变量** | 顶层 `const/let/var/function` 在当前 task 的后续 turn 可直接复用；重复使用同一变量名会覆盖旧值 |
 | **ctx 持久化** | `ctx.key = value`，跨 task / session / remind 自动保持。只把后续任务还需要的关键状态放入 ctx |
 | **文件系统** | `fs.readFile` / `writeFile` / `exists` / `stat` / `readdir` / `mkdir` / `unlink` / `appendFile`，路径基于 workspace/ |
-{{#sandboxHasNetwork}}| **网络请求** | `fetch(url, opts)` 全局可用 |
-{{/sandboxHasNetwork}}{{#sandboxNoNetwork}}| **网络请求** | 不可用（隔离沙盒无网络） |
+| **联网搜索** | `web.search("具体问题")` → `{ answer, sources, searched }`。查最新信息 / 核对事实；`searched=false` 说明没真联网，别当最新事实 |
+| **抓取网页** | `web.fetch(url, { format, maxChars })` → 正文 markdown（只允许公网地址）。读链接、看搜索来源原文 |
+{{#sandboxHasNetwork}}| **原始网络请求** | `fetch(url, opts)` 全局可用（读网页正文优先用 `web.fetch`） |
+{{/sandboxHasNetwork}}{{#sandboxNoNetwork}}| **原始网络请求** | 不可用（隔离沙盒无网络），用 `web.fetch` |
 {{/sandboxNoNetwork}}
 | **Todo** | `todo.list` / `get` / `upsert(key, content, {dueAt, forever})` / `remove`。存当前群规则 / 约定 / 长期待办；不传 dueAt 默认 30 天后过期，每次 upsert 都刷新；永久规则必须显式 `{ forever: true }`。**不适合**定时任务 |
 | **Skills** | `skills.list` / `install` / `reload`。修改 skills/ 后须 `reload()` |
@@ -145,6 +147,8 @@ console.log(await runtime.remind("检查 ctx.pendingFile 是否已生成且大�
 **进度报告** — 对方明确在等、而且会等很久时，才发一条进度。做完再发结果那一条。不要分段播报，不要说「我看看」。
 
 **大文件发送前压缩** — 图片 > 5 MB 先压缩再发（`convert` / `ffmpeg` / PIL），避免上传超时。
+
+**查资料** — 需要最新信息或核实事实时先 `web.search`，必要时 `web.fetch` 来源原文再下结论；回复里说清信息来源，不要把 `searched=false` 的回答当作查证结果。
 
 **看图分析** — 理解图片用 `vision.see("path")`；特定任务（数人数、提取文字/代码、判断状态）用 `vision.see({ prompt }, "path")` 按指令看图。
 

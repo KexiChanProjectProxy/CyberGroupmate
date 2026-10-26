@@ -24,6 +24,8 @@ import {
 import { validateCronMinInterval } from "../core/cron-matcher.js";
 import { createLogger } from "../core/logger.js";
 import { describeImage, ensureSupportedFormat } from "../core/vision-processor.js";
+import { webSearch } from "../core/web/search.js";
+import { webFetch, type WebFetchOptions } from "../core/web/fetch.js";
 import { MemoryStoreV2 } from "../memory-v2/index.js";
 import { embed } from "../memory-v2/embedding.js";
 import { GlobalState } from "../main-agent/global-state.js";
@@ -994,6 +996,18 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             }));
 
             return results;
+        }
+
+        if (method === "web.search") {
+            return webSearch(loadConfig().web, String(args[0] ?? ""));
+        }
+
+        if (method === "web.fetch") {
+            const opts = args[1] && typeof args[1] === "object" ? args[1] as WebFetchOptions : {};
+            return webFetch(loadConfig().web, String(args[0] ?? ""), {
+                ...(opts.format === "text" || opts.format === "markdown" ? { format: opts.format } : {}),
+                ...(opts.maxChars != null ? { maxChars: Number(opts.maxChars) } : {}),
+            });
         }
 
         if (method === "memory.searchFacts") {

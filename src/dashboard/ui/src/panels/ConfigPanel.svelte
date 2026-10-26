@@ -21,6 +21,7 @@
   import EnvVarsTab from "./config/EnvVarsTab.svelte";
   import SystemPromptsTab from "./config/SystemPromptsTab.svelte";
   import GroundingTab from "./config/GroundingTab.svelte";
+  import WebTab from "./config/WebTab.svelte";
   import RateLimitingTab from "./config/RateLimitingTab.svelte";
   import BackgroundAgentTab from "./config/BackgroundAgentTab.svelte";
   import MetricsTab from "./config/MetricsTab.svelte";
@@ -71,6 +72,7 @@
     { id: "recordingPipeline", label: "Recording", icon: "fa-tape" },
     { id: "systemPrompts", label: "System Prompts", icon: "fa-file-lines" },
     { id: "grounding", label: "Grounding", icon: "fa-globe" },
+    { id: "web", label: "Web 搜索/抓取", icon: "fa-magnifying-glass" },
     { id: "rateLimiting", label: "请求限速", icon: "fa-gauge-high" },
     { id: "backgroundAgent", label: "做梦系统", icon: "fa-moon" },
     { id: "accessControl", label: "访问控制", icon: "fa-shield-halved" },
@@ -130,7 +132,7 @@
       if (config.subagent.postTaskWindowMs == null) config.subagent.postTaskWindowMs = 120000;
       if (!config.subagent.metaHistory) config.subagent.metaHistory = {};
       if (!config.subagent.baseSkills) config.subagent.baseSkills = [
-        "runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "dispatch", "vision", "shell",
+        "runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "dispatch", "vision", "web", "shell",
       ];
       if (!config.subagent.bannedWords) config.subagent.bannedWords = [
         "确实", "笑死", "还真是", "接住", "抓住", "你说得对", "说得对", "不绕", "我认了",
@@ -140,6 +142,9 @@
       if (!config.recordingPipeline) config.recordingPipeline = {};
       if (!config.envVars) config.envVars = [];
       if (!config.grounding) config.grounding = { provider: 'google', apiKey: '' };
+      if (!config.web) config.web = {};
+      if (!config.web.search) config.web.search = { apiKey: '' };
+      if (!config.web.fetch) config.web.fetch = {};
       if (!config.rateLimiting) config.rateLimiting = { enabled: false, maxConcurrency: 0, requestsPerMinute: 0, perProfile: {} };
       if (!config.rateLimiting.perProfile) config.rateLimiting.perProfile = {};
       // Adapter 启用状态：根据后端是否返回了有效配置来判断
@@ -665,6 +670,8 @@
             <MetricsTab bind:config />
           {:else if currentSection === "grounding"}
             <GroundingTab bind:config {pwFocus} {pwBlur} />
+          {:else if currentSection === "web"}
+            <WebTab bind:config {pwFocus} {pwBlur} />
           {:else if currentSection === "systemPrompts"}
             <SystemPromptsTab
               bind:promptsLoading

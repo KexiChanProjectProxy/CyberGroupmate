@@ -51,7 +51,7 @@ const dynamicStickerPreviewCache = new Map<string, { mtimeMs: number; buffer: Bu
 const DEFAULT_CODEACT_DEBUG_TIMEOUT_MS = 30_000;
 const MAX_CODEACT_DEBUG_TIMEOUT_MS = 120_000;
 const DEFAULT_SUBAGENT_DEBUG_MODULES = [
-    "runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "privacy", "dispatch", "vision", "shell",
+    "runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "privacy", "dispatch", "vision", "web", "shell",
 ];
 const BUILTIN_DEBUG_DTS: Record<string, string> = {
     runtime: "runtime/runtime.d.ts",
@@ -66,6 +66,7 @@ const BUILTIN_DEBUG_DTS: Record<string, string> = {
     memory: "memory/memory.d.ts",
     dispatch: "dispatch/dispatch.d.ts",
     vision: "vision/vision.d.ts",
+    web: "web/web.d.ts",
     shell: "shell/shell.d.ts",
     telegram: "telegram/telegram.d.ts",
     discord: "discord/discord.d.ts",

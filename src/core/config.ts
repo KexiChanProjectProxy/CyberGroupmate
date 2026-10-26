@@ -634,6 +634,35 @@ export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     skillsSyncBack: false,
 };
 
+/** Web 搜索 / 抓取（sandbox `web` 模块与 meta `web` API，host 侧执行） */
+export interface WebConfig {
+    /** HTTP(S) 代理（如 http://127.0.0.1:7890），search 与 fetch 共用；不支持 socks */
+    proxy?: string;
+    /** 联网搜索：OpenAI Responses 兼容端点 + web_search 内建工具 */
+    search?: WebSearchConfig;
+    /** 网页抓取 */
+    fetch?: WebFetchConfig;
+}
+
+export interface WebSearchConfig {
+    apiKey: string;
+    /** 默认 https://api.openai.com/v1 */
+    baseUrl?: string;
+    /** 默认 gpt-6-luna */
+    model?: string;
+    /** 默认 60000 */
+    timeoutMs?: number;
+}
+
+export interface WebFetchConfig {
+    /** 默认 15000 */
+    timeoutMs?: number;
+    /** 返回正文的最大字符数（默认 20000） */
+    maxChars?: number;
+    /** 自定义 User-Agent */
+    userAgent?: string;
+}
+
 export interface AppConfig {
     llmProfiles: Record<string, LLMConfig>;
     llmRouting: LLMRoutingConfig;
@@ -671,6 +700,8 @@ export interface AppConfig {
     sandbox: SandboxConfig;
     /** Grounding（联网事实查证）配置 */
     grounding?: GroundingConfig;
+    /** Web 搜索 / 抓取配置 */
+    web?: WebConfig;
     /** LLM 请求限速配置 */
     rateLimiting?: import("./llm-rate-limiter.js").RateLimitConfig;
     /** Background Agent 配置 */
@@ -882,6 +913,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         emergencyBlock: parseEmergencyBlockConfig(fileConfig),
         mcpServers: parseMcpServersConfig(fileConfig),
         grounding: parseGroundingConfig(fileConfig),
+        web: parseWebConfig(fileConfig),
         rateLimiting: parseRateLimitingConfig(fileConfig),
         backgroundAgent: parseBackgroundAgentConfig(fileConfig),
     };
@@ -1414,6 +1446,32 @@ function parsePrivacyConfig(fileConfig: Record<string, unknown>): PrivacyConfig 
         allowLlmMarkSensitive: parseBool(raw.allow_llm_mark_sensitive, DEFAULT_PRIVACY.allowLlmMarkSensitive),
         enforce,
     };
+}
+
+function parseWebConfig(fileConfig: Record<string, unknown>): WebConfig | undefined {
+    const raw = fileConfig.web as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    const result: WebConfig = {};
+    const proxy = str(raw.proxy);
+    if (proxy) result.proxy = proxy;
+    const s = raw.search as Record<string, unknown> | undefined;
+    if (s && typeof s === "object" && str(s.api_key)) {
+        result.search = {
+            apiKey: str(s.api_key)!,
+            ...(str(s.base_url) ? { baseUrl: str(s.base_url) } : {}),
+            ...(str(s.model) ? { model: str(s.model) } : {}),
+            ...(s.timeout_ms != null ? { timeoutMs: num(s.timeout_ms, 60_000) } : {}),
+        };
+    }
+    const f = raw.fetch as Record<string, unknown> | undefined;
+    if (f && typeof f === "object") {
+        result.fetch = {
+            ...(f.timeout_ms != null ? { timeoutMs: num(f.timeout_ms, 15_000) } : {}),
+            ...(f.max_chars != null ? { maxChars: num(f.max_chars, 20_000) } : {}),
+            ...(str(f.user_agent) ? { userAgent: str(f.user_agent) } : {}),
+        };
+    }
+    return result;
 }
 
 function parseGroundingConfig(fileConfig: Record<string, unknown>): GroundingConfig | undefined {
@@ -2079,6 +2137,27 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         obj.grounding = g;
     }
 
+    // web
+    if (config.web) {
+        const w: Record<string, unknown> = {};
+        if (config.web.proxy) w.proxy = config.web.proxy;
+        if (config.web.search?.apiKey) {
+            const ws: Record<string, unknown> = { api_key: config.web.search.apiKey };
+            if (config.web.search.baseUrl) ws.base_url = config.web.search.baseUrl;
+            if (config.web.search.model) ws.model = config.web.search.model;
+            if (config.web.search.timeoutMs != null) ws.timeout_ms = config.web.search.timeoutMs;
+            w.search = ws;
+        }
+        if (config.web.fetch) {
+            const wf: Record<string, unknown> = {};
+            if (config.web.fetch.timeoutMs != null) wf.timeout_ms = config.web.fetch.timeoutMs;
+            if (config.web.fetch.maxChars != null) wf.max_chars = config.web.fetch.maxChars;
+            if (config.web.fetch.userAgent) wf.user_agent = config.web.fetch.userAgent;
+            if (Object.keys(wf).length > 0) w.fetch = wf;
+        }
+        if (Object.keys(w).length > 0) obj.web = w;
+    }
+
     // rate_limiting
     if (config.rateLimiting) {
         const rl: Record<string, unknown> = {
@@ -2241,6 +2320,23 @@ export function validateConfig(config: unknown): { valid: boolean; errors: strin
                     errors.push(`Routing "${comp}" 引用了不存在的 profile: "${n}"`);
                 }
             }
+        }
+    }
+
+    // web (optional)
+    const web = c.web as Record<string, unknown> | undefined;
+    if (web && typeof web === "object") {
+        if (typeof web.proxy === "string" && web.proxy.trim()) {
+            try {
+                const u = new URL(web.proxy.trim());
+                if (u.protocol !== "http:" && u.protocol !== "https:") errors.push("web.proxy 只支持 http:// 或 https:// 代理");
+            } catch {
+                errors.push(`web.proxy 不是合法 URL: "${web.proxy}"`);
+            }
+        }
+        const ws = web.search as Record<string, unknown> | undefined;
+        if (ws && typeof ws === "object" && (ws.baseUrl || ws.model) && !ws.apiKey) {
+            errors.push("web.search: 配置了 baseUrl/model 但缺少 apiKey");
         }
     }
 

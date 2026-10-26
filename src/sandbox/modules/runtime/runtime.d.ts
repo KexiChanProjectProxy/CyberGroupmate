@@ -96,7 +96,7 @@ declare const runtime: {
      *
      * @example
      * // 1 小时后提醒
-     * await runtime.remind("用 tavily 搜索刚才讨论的那个开源项目的最新版本，然后把结果发到群里", 60);
+     * await runtime.remind("用 web.search 搜索刚才讨论的那个开源项目的最新版本，然后把结果发到群里", 60);
      */
     remind(description: string, delayMinutes: number): Promise<{
         reminderId: string;

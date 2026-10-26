@@ -20,6 +20,7 @@ import { mcpBridge, setMcpListSnapshot, setMcpProxyCallbacks } from "./modules/m
 import { cronModule, setCronCallbacks } from "./modules/cron/index.js";
 import { todoModule, setTodoCallbacks } from "./modules/kv/index.js";
 import { visionModule, setVisionCallbacks } from "./modules/vision/index.js";
+import { webModule, setWebCallbacks } from "./modules/web/index.js";
 import { memoryModule, setMemoryCallbacks } from "./modules/memory/index.js";
 import { privacyModule, setPrivacyCallbacks } from "./modules/privacy/index.js";
 import { emergencyModule, setEmergencyCallbacks } from "./modules/emergency/index.js";
@@ -608,8 +609,8 @@ async function executeCode(id: string, code: string, scopeId?: string): Promise<
         // 构造参数列表：固定参数 + 平台 API + 动态 Skill 参数
         // ctx 保留为纯用户 state bag（LLM 可跨 turn 存取任意属性）
         const sh = installShell();
-        const fixedArgNames = ["ctx", "runtime", "scene", "skills", "fs", "mcp", "cron", "todo", "vision", "memory", "privacy", "emergency", "dispatch", "shell", "telegram", "discord", "onebot", "qq", "feishu"];
-        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoModule as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), tracker.wrap(privacyModule as unknown as Record<string, unknown>), tracker.wrap(emergencyModule as unknown as Record<string, unknown>), tracker.wrap(dispatchModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob, fh];
+        const fixedArgNames = ["ctx", "runtime", "scene", "skills", "fs", "mcp", "cron", "todo", "vision", "memory", "privacy", "emergency", "dispatch", "shell", "telegram", "discord", "onebot", "qq", "feishu", "web"];
+        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoModule as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), tracker.wrap(privacyModule as unknown as Record<string, unknown>), tracker.wrap(emergencyModule as unknown as Record<string, unknown>), tracker.wrap(dispatchModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob, fh, tracker.wrap(webModule as unknown as Record<string, unknown>)];
         const allArgNames = [...fixedArgNames, ...skillArgNames];
         const allArgValues = [...fixedArgValues, ...skillArgValues];
 
@@ -813,6 +814,7 @@ async function initWorker(): Promise<void> {
     setCronCallbacks({ callHost });
     setTodoCallbacks({ callHost });
     setVisionCallbacks({ callHost });
+    setWebCallbacks({ callHost });
     setMemoryCallbacks({ callHost });
     setPrivacyCallbacks({ callHost });
     setEmergencyCallbacks({ callHost });

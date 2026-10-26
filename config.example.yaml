@@ -498,6 +498,7 @@ metrics:
 #     - kv
 #     - http
 #     - vision
+#     - web
 #     - shell
 #   code_act:
 #     # 最大交互轮次 (30)
@@ -553,6 +554,23 @@ metrics:
 #     #   ca: /run/cgm-tls/ca.crt
 #     #   cert: /run/cgm-tls/client.crt
 #     #   key: /run/cgm-tls/client.key
+
+# ─── Web 搜索 / 抓取 ───
+# Agent 可调用的 web.search(query) / web.fetch(url)（子 agent 与 Meta 均可用），在宿主侧执行，
+# remote 无网络沙盒也能用。搜索走 OpenAI Responses API + web_search 内建工具。
+# web:
+#   # HTTP(S) 代理，search 与 fetch 共用（不支持 socks）
+#   proxy: http://127.0.0.1:7890
+#   search:
+#     api_key: ""
+#     base_url: https://api.openai.com/v1   # 任意 OpenAI Responses 兼容端点
+#     model: gpt-6-luna
+#     timeout_ms: 60000
+#   fetch:
+#     timeout_ms: 15000
+#     max_chars: 20000                     # 返回正文的最大字符数
+#     # user_agent: "Mozilla/5.0 ..."
+#   # web.fetch 只允许公网 http/https，拒绝 localhost / 私网 / 链路本地（含云元数据）地址
 
 # ─── MCP Servers 预配置 ───
 # 在 Sandbox 启动时自动连接的 MCP Server 列表。

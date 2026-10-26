@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-26: 新增 web.search / web.fetch（子 agent 与 Meta，host 侧执行）
+
+- `web.search(query)` → `{ answer, sources, searched }`：OpenAI Responses API + `web_search` 内建工具；`web.search.api_key` / `base_url` / `model`（默认 `gpt-6-luna`）可配置，调用计入 Dashboard LLM 日志（caller `web-search`）。
+- `web.fetch(url, { format, maxChars })` → 正文 markdown / 纯文本：Readability 抽正文 + turndown 转 markdown，链接转绝对地址；响应体上限 5 MB，正文按 `web.fetch.max_chars` 截断。
+- `web.proxy`：HTTP(S) 代理（undici `ProxyAgent`），search 与 fetch 共用。
+- SSRF 防护：只允许 http/https；拒绝 localhost / 私网 / 链路本地 / 保留地址（含 IPv4-mapped IPv6），每一跳重定向都校验；直连时在建连阶段校验 DNS 结果。
+- 默认可用：不受 `subagent.base_skills` 影响；remote 无网络沙盒也能用。Dashboard 新增「Web 搜索/抓取」配置页。
+- 新依赖（精确版本）：`undici`、`@mozilla/readability`、`linkedom`、`turndown`。
+
 ## 2026-10-24: LLM provider 改用 AI SDK
 
 - Anthropic Messages / OpenAI Responses / OpenAI 兼容 Chat Completions 改经 AI SDK（`ai` 7、`@ai-sdk/anthropic`、`@ai-sdk/openai`、`@ai-sdk/openai-compatible`，精确版本锁定）调用，

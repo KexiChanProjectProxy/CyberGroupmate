@@ -19,6 +19,7 @@ export const NOTEBOOK_RESERVED_NAMES = new Set([
     "cron",
     "todo",
     "vision",
+    "web",
     "memory",
     "privacy",
     "shell",

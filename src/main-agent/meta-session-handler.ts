@@ -21,7 +21,7 @@ import type { GlobalState } from "./global-state.js";
 import { trimMetaSessionHistoryWindow } from "./meta-history-retention.js";
 
 const log = createLogger("meta-session-handler");
-const DEFAULT_BASE_SKILLS = ["runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "privacy", "dispatch", "vision", "shell"];
+const DEFAULT_BASE_SKILLS = ["runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "privacy", "dispatch", "vision", "web", "shell"];
 const META_END_TURN_MARKER = "<end_turn>";
 const META_RUNNER_NOTICE_PREFIX = "[Meta runner notice]";
 type MetaHistoryMessage = Pick<MetaSessionHistoryEntry, "role" | "content" | "reasoning">;
@@ -286,6 +286,7 @@ async function buildAssignableSkillsRoster(): Promise<string> {
         const currentConfig = loadConfig();
         const baseSkills = new Set(currentConfig.subagent?.baseSkills ?? DEFAULT_BASE_SKILLS);
         baseSkills.add("dispatch");
+        baseSkills.add("web");
 
         if (currentConfig.telegram) baseSkills.add("telegram");
         if (currentConfig.discord) baseSkills.add("discord");

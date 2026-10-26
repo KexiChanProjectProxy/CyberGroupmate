@@ -851,13 +851,14 @@ export class CodeActExecutor {
         // 2. 渲染系统 prompt (subagent.md §12.2 ➎ — 稳定部分，保持 Mustache 模板)
         const currentConfig = loadConfig();
         const baseSkills = currentConfig.subagent?.baseSkills ?? [
-            "runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "privacy", "dispatch", "vision", "shell",
+            "runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "privacy", "dispatch", "vision", "web", "shell",
         ];
         const platform = getPlatform(this.chatId);
         const allowedSkills = new Set<string>([
             ...baseSkills,
             "dispatch",
             "emergency",  // 安全兜底：紧急拉黑始终可用，不受 baseSkills 配置影响
+            "web",        // 联网搜索 / 抓取（host 侧执行），不受 baseSkills 配置影响
             platform,
             ...(task.useSkills ?? []),
         ]);

@@ -30,7 +30,7 @@ declare const cron: {
      * @example
      * // 工作日早 9 点播报新闻
      * await cron.add("新闻播报", "0 9 * * 1-5",
-     *   "用 tavily 搜索今日科技新闻，整理成简短的播报发送到群里");
+     *   "用 web.search 搜索今日科技新闻，整理成简短的播报发送到群里");
      */
     add(name: string, cronExpr: string, taskDescription: string): Promise<{
         id: string;

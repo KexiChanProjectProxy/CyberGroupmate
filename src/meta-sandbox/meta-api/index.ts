@@ -14,6 +14,7 @@ import { createMemoryApi } from "./memory.js";
 import { createPrivacyApi } from "./privacy.js";
 import { createCronApi, createReminderApi } from "./scheduler.js";
 import { createTodoApi } from "./todo.js";
+import { createWebApi } from "./web.js";
 
 // ── 隐私模型说明 ──
 // Meta 是「只调度、不亲自动手」的可信编排者，要服务某个会话就必须读到它的内容——因此 Meta 的「读」
@@ -82,5 +83,6 @@ export function buildMetaApiContext(deps: BuildMetaApiContextDeps) {
         todo: createTodoApi(deps.memory),
         remind: createReminderApi(deps.globalState),
         cron: createCronApi(deps.globalState),
+        web: createWebApi(),
     };
 }

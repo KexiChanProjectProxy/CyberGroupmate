@@ -214,3 +214,9 @@ modules/vision.d.ts — Vision 视觉模块类型定义 提供图片识别能力
 
 - `see`: 看图：读取一张或多张图片文件，返回每张图片的文字描述。 使用 Vision LLM 分析图片内容，支持 JPEG、PNG、WebP 等常见格式。
 - `see`: 看图（自定义分析）：用指定 prompt 分析图片，而不是默认的"描述内容"。
+
+## web
+modules/web.d.ts — Web 联网模块类型定义 联网搜索与网页抓取。均在宿主侧执行（沙盒本身无网络也可用）， 抓取只允许公网 http/https 地址。 web: WebModule — 全局可用
+
+- `search`: 联网搜索：用一句自然语言提问，返回带引用来源的回答。 适合查最新消息、版本号、价格、事实核对等。问题写具体一些效果更好。
+- `fetch`: 抓取网页：下载 URL 并提取正文（HTML 自动去掉导航/脚本，转成 markdown）。 只允许公网 http/https 地址；不支持图片、PDF 等二进制内容。
