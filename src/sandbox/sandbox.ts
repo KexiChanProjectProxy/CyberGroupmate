@@ -75,6 +75,11 @@ export interface SandboxRuntimeConfig {
     skillsSyncBack?: boolean;
     /** worker 就绪超时（remote 冷启动更慢） */
     readyTimeoutMs?: number;
+    /**
+     * OS 级执行（bash / shell / child_process）。仅显式 false 时关闭；
+     * 生产路径由 buildSandboxRuntime 依据 sandbox.process_exec 显式设置（默认 false）。
+     */
+    processExec?: boolean;
     limits?: Partial<ProtocolLimits>;
     remote?: {
         /**
@@ -281,6 +286,9 @@ export class Sandbox extends EventEmitter {
         env.SANDBOX_CTX_PATH = join(this.getStateDir(), "ctx.json");
         if (this.isRemote()) env.SANDBOX_NO_NETWORK = "1";
         else delete env.SANDBOX_NO_NETWORK;
+        // 最后写入：不允许 sandbox 作用域变量覆盖
+        if (this.isProcessExecDisabled()) env.SANDBOX_NO_PROCESS_EXEC = "1";
+        else delete env.SANDBOX_NO_PROCESS_EXEC;
         if (this.isRemote() && this.runtime.skillsSyncBack) env.SANDBOX_SKILLS_SYNC_BACK = "1";
         else delete env.SANDBOX_SKILLS_SYNC_BACK;
         return env;
@@ -718,6 +726,7 @@ export class Sandbox extends EventEmitter {
      * 结果末尾附加 [cwd: /current/path]。超时不抛错，返回带超时标记的部分输出。
      */
     async executeShell(command: string, timeout: number = 30000): Promise<ExecutionResult> {
+        this.assertProcessExec();
         if (!this.alive) {
             throw new Error("Sandbox worker is not running");
         }
@@ -744,6 +753,7 @@ export class Sandbox extends EventEmitter {
         command: string,
         opts?: { tabId?: string; idleTimeout?: number; maxDuration?: number },
     ): Promise<{ tabId: string }> {
+        this.assertProcessExec();
         const value = await this.request({ type: "shell_run_background", command, opts: opts ?? {} });
         const tabId = value && typeof value === "object" ? (value as { tabId?: unknown }).tabId : undefined;
         if (typeof tabId !== "string") throw new Error("shell.runBackground: invalid response from sandbox");
@@ -798,7 +808,19 @@ export class Sandbox extends EventEmitter {
 
     // ─── Shell Tab 管理（供 shell 模块 host call 使用） ───
 
+    /** OS 级执行是否被关闭（sandbox.process_exec=false） */
+    isProcessExecDisabled(): boolean {
+        return this.runtime.processExec === false;
+    }
+
+    private assertProcessExec(): void {
+        if (this.isProcessExecDisabled()) {
+            throw new Error("[Sandbox 安全限制] bash / shell 已禁用（sandbox.process_exec=false）");
+        }
+    }
+
     private async shellOp(op: string, ...args: unknown[]): Promise<unknown> {
+        this.assertProcessExec();
         return this.request({ type: "shell_op", op, args });
     }
 

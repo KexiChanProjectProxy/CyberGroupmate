@@ -49,7 +49,9 @@ declare const skills: {
     reload(): Promise<SkillListEntry[]>;
 
     /**
-     * 安装 npm 包到 workspace/skills/ 目录
+     * 安装 npm 包到 workspace/skills/ 目录。
+     * 管理员关闭 OS 级执行（sandbox.process_exec=false）或沙盒无网络时会抛错，
+     * 此时需请管理员把依赖加入 workspace/skills/package.json。
      * @param packages 包名列表，如 ["axios", "cheerio@1.0.0"]
      * @returns 安装输出
      * 

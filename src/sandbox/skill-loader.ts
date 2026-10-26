@@ -644,6 +644,11 @@ export async function installDepsRuntime(packages: string[]): Promise<string> {
     if (packages.length === 0) {
         throw new Error("请指定至少一个要安装的包名");
     }
+    if (process.env.SANDBOX_NO_PROCESS_EXEC === "1") {
+        throw new Error(
+            "运行时装包已禁用（sandbox.process_exec=false）。请让管理员在 Dashboard → Skills 中把依赖加入 workspace/skills/package.json。",
+        );
+    }
     if (process.env.SANDBOX_NO_NETWORK === "1") {
         throw new Error(
             "沙盒没有网络访问，无法 npmInstall。请让管理员在 Dashboard → Skills 中把依赖加入 workspace/skills/package.json，" +

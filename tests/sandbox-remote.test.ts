@@ -59,6 +59,7 @@ function runtimeFor(clientCert = certs["client.crt"], clientKey = certs["client.
         mode: "remote",
         inheritHostEnv: false,
         skillsSyncBack: false,
+        processExec: true,
         readyTimeoutMs: 30_000,
         remote: {
             endpoints: [{ name: "local", address: `127.0.0.1:${port}`, servername: "localhost" }],

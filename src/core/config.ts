@@ -594,6 +594,11 @@ export interface SandboxConfig {
     inheritHostEnv: boolean;
     /** 允许把 agent 在 sandbox 内编写的 skill 回传到 host 的 workspace/skills（默认 false） */
     skillsSyncBack: boolean;
+    /**
+     * 是否允许 OS 级代码执行（默认 false）：bash 代码块、shell 模块、skills.npmInstall、
+     * worker 内 child_process / worker_threads、stdio MCP 子进程。false 时只能写 JS 代码块。
+     */
+    processExec: boolean;
     /** worker 就绪超时（ms） */
     readyTimeoutMs?: number;
     /** 协议上限覆盖（见 src/sandbox/protocol/limits.ts） */
@@ -632,6 +637,7 @@ export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     mode: "local",
     inheritHostEnv: false,
     skillsSyncBack: false,
+    processExec: false,
 };
 
 /** Web 搜索 / 抓取（sandbox `web` 模块与 meta `web` API，host 侧执行） */
@@ -1362,6 +1368,7 @@ function parseSandboxConfig(fileConfig: Record<string, unknown>): SandboxConfig 
         mode,
         inheritHostEnv: raw.inherit_host_env === true,
         skillsSyncBack: raw.skills_sync_back === true,
+        processExec: raw.process_exec === true,
         ...(raw.ready_timeout_ms != null ? { readyTimeoutMs: num(raw.ready_timeout_ms, 30_000) } : {}),
     };
     if (raw.limits && typeof raw.limits === "object") {
@@ -2090,10 +2097,11 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
 
     // sandbox（仅在非默认时写出）
     const sb = config.sandbox;
-    if (sb && (sb.mode !== "local" || sb.inheritHostEnv || sb.skillsSyncBack || sb.remote || sb.limits || sb.readyTimeoutMs != null)) {
+    if (sb && (sb.mode !== "local" || sb.inheritHostEnv || sb.skillsSyncBack || sb.processExec || sb.remote || sb.limits || sb.readyTimeoutMs != null)) {
         const sbObj: Record<string, unknown> = { mode: sb.mode };
         if (sb.inheritHostEnv) sbObj.inherit_host_env = true;
         if (sb.skillsSyncBack) sbObj.skills_sync_back = true;
+        if (sb.processExec) sbObj.process_exec = true;
         if (sb.readyTimeoutMs != null) sbObj.ready_timeout_ms = sb.readyTimeoutMs;
         if (sb.limits) {
             sbObj.limits = Object.fromEntries(Object.entries(sb.limits).map(([k, v]) => [k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), v]));

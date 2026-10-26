@@ -338,6 +338,10 @@ async function main(): Promise<void> {
     await autoReconnectMcp();
     for (const server of appConfig.mcpServers ?? []) {
         if (server.autoConnect === false) continue;
+        if (server.transport === "stdio" && !appConfig.sandbox?.processExec) {
+            log.warn("跳过 stdio MCP server：sandbox.process_exec=false 禁止启动子进程", { name: server.name });
+            continue;
+        }
         try {
             await mcpBridge.connect({
                 name: server.name,

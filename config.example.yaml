@@ -499,7 +499,7 @@ metrics:
 #     - http
 #     - vision
 #     - web
-#     - shell
+#     - shell        # sandbox.process_exec=false 时自动隐藏
 #   code_act:
 #     # 最大交互轮次 (30)
 #     max_turns: 30
@@ -521,6 +521,10 @@ metrics:
 #   通过 mTLS 连接 sandboxd。部署见 docs/sandbox-remote.md。
 # sandbox:
 #   mode: remote
+#   # OS 级代码执行（默认 false = 关闭）：```bash 代码块、shell 模块（含 runBackground）、
+#   # worker 内 child_process / worker_threads、skills.npmInstall、stdio MCP 子进程。
+#   # 关闭时 agent 只能写 JS 代码块；联网改用 web.search / web.fetch。改动需重启。
+#   process_exec: false
 #   # local 模式下默认只把白名单变量与 scope=sandbox/both 的 env_vars 传给 sandbox；
 #   # 设为 true 恢复旧行为（继承宿主完整环境变量，含 bot token 等）。remote 模式下忽略。
 #   inherit_host_env: false
@@ -577,6 +581,7 @@ metrics:
 # 每个条目必须指定 name，并提供 command（stdio）或 url（Streamable HTTP）。
 # auto_connect 默认 true，设为 false 则不自动连接。
 # sandbox 只能通过 mcp.connect("name") 按名称（重新）连接这里预配置的服务器，不能自定义服务器。
+# stdio 型服务器需要启动子进程，sandbox.process_exec=false（默认）时会被跳过。
 # mcp_servers:
 #   - name: filesystem
 #     transport: stdio

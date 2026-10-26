@@ -287,6 +287,8 @@ async function buildAssignableSkillsRoster(): Promise<string> {
         const baseSkills = new Set(currentConfig.subagent?.baseSkills ?? DEFAULT_BASE_SKILLS);
         baseSkills.add("dispatch");
         baseSkills.add("web");
+        // 名册只列"可额外指派"的模块：shell 禁用时也不能被指派
+        if (!currentConfig.sandbox?.processExec) baseSkills.add("shell");
 
         if (currentConfig.telegram) baseSkills.add("telegram");
         if (currentConfig.discord) baseSkills.add("discord");

@@ -166,7 +166,7 @@ shared/skills.d.ts — Skills 高层能力 + 管理接口
 - `install`: 安装或创建一个新 Skill。支持SKILL.md 型（多数场景）和TS Skills（复杂能力场景） 两种方式完成文件后，都需要调用 skills.reload() 生效。
 - `list`: 列出当前已加载的 Skills 元数据。 `bindingName` 用于调用注入的全局变量，`path` 用于通过 fs 读取该 skill 的文件。
 - `reload`: 热重载所有 Skills。在 workspace/skills/ 下创建/修改文件后调用。
-- `npmInstall`: 安装 npm 包到 workspace/skills/ 目录
+- `npmInstall`: 安装 npm 包到 workspace/skills/ 目录。 管理员关闭 OS 级执行（sandbox.process_exec=false）或沙盒无网络时会抛错， 此时需请管理员把依赖加入 workspace/skills/package.json。
 
 ## telegram
 telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 的接口子集。 提供给 Agent 在 sandbox 执行时作为 TypeScript 强类型上下文参考。 平台连接与消息监听由宿主侧官方 adapter 管理。

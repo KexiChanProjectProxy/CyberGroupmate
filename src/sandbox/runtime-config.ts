@@ -32,10 +32,11 @@ export function buildSandboxRuntime(
     let ephemeral: { broker: BrokerClient; prices: SpotPriceBook | null } | null = overrides?.broker
         ? { broker: overrides.broker, prices: overrides.prices ?? null }
         : null;
-    const cfg = sandbox ?? { mode: "local", inheritHostEnv: false, skillsSyncBack: false };
+    const cfg = sandbox ?? { mode: "local", inheritHostEnv: false, skillsSyncBack: false, processExec: false };
     const base: SandboxRuntimeConfig = {
         mode: cfg.mode,
         inheritHostEnv: cfg.inheritHostEnv,
+        processExec: cfg.processExec === true,
         ...(cfg.readyTimeoutMs != null ? { readyTimeoutMs: cfg.readyTimeoutMs } : {}),
         ...(cfg.limits ? { limits: cfg.limits as Partial<ProtocolLimits> } : {}),
     };

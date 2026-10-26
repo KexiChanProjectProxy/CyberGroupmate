@@ -248,6 +248,11 @@ export interface SessionResult {
 /** 支持的代码围栏语言标记（用于构建正则） */
 const CODE_FENCE_LANGS = "typescript|ts|javascript|js|bash|shell|sh";
 
+/** sandbox.process_exec=false 时 bash 代码块的 observation */
+const BASH_DISABLED_MESSAGE =
+    "bash / shell 代码块已禁用（sandbox.process_exec=false），本块未执行。" +
+    "请改写为 JS 代码块，使用内置模块（fs / web.search / web.fetch / memory 等）完成任务。";
+
 /** 判断语言标记是否为 JS/TS 类 */
 function isJsLang(lang: string): boolean {
     return ["typescript", "ts", "javascript", "js"].includes(lang);
@@ -871,8 +876,10 @@ export async function runCodeActSession(
             let errorOccurred = false;
 
             try {
-                const result = block.lang === "bash"
-                    ? await sandbox.executeShell(block.code, effectiveExecuteTimeout)
+                const result: ExecutionResult = block.lang === "bash"
+                    ? (sandbox.isProcessExecDisabled?.()
+                        ? { output: BASH_DISABLED_MESSAGE, error: true }
+                        : await sandbox.executeShell(block.code, effectiveExecuteTimeout))
                     : await sandbox.execute(block.code, effectiveExecuteTimeout, { scopeId: sessionId });
                 turn.executionResults.push(result);
 

@@ -14,6 +14,22 @@
   <i class="fa-solid fa-robot opacity-50 mr-1"></i> CodeAct
 </h3>
 <p class="text-xs opacity-50 mb-3">CodeAct 执行引擎和注意力系统参数。</p>
+{#if config.sandbox}
+  <div class="cfg-grid-2 mb-3">
+    <label class="cfg-check col-span-2"
+      ><input
+        type="checkbox"
+        class="toggle toggle-xs"
+        bind:checked={config.sandbox.processExec}
+      /><span
+        ><i class="fa-solid fa-rotate-right restart-icon"></i> 允许 OS 级代码执行（bash 代码块 / shell / 子进程 / npmInstall / stdio MCP）</span
+      ></label
+    >
+    <p class="text-xs opacity-50 col-span-2">
+      关闭（默认）时 agent 只能写 JS 代码块；改动需重启生效。
+    </p>
+  </div>
+{/if}
 {#if config.subagent}
   <div class="cfg-grid-2">
     <label class="cfg-field"

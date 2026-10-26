@@ -646,8 +646,8 @@
       },
       {
         "name": "npmInstall",
-        "brief": "安装 npm 包到 workspace/skills/ 目录",
-        "fullDoc": "```typescript\nnpmInstall(packages: string[]): Promise<string>\n```\n\n\n安装 npm 包到 workspace/skills/ 目录\n\n**参数：**\n- `packages`: 包名列表，如 [\"axios\", \"cheerio@1.0.0\"]\n- **返回值**: 安装输出\n\n**示例：**\n```typescript\nawait skills.npmInstall([\"cheerio\", \"node-fetch\"]);\n```"
+        "brief": "安装 npm 包到 workspace/skills/ 目录。 管理员关闭 OS 级执行（sandbox.process_exec=false）或沙盒无网络时会抛错， 此时需请管理员把依赖加入 workspace/skills/package.json。",
+        "fullDoc": "```typescript\nnpmInstall(packages: string[]): Promise<string>\n```\n\n\n安装 npm 包到 workspace/skills/ 目录。\n管理员关闭 OS 级执行（sandbox.process_exec=false）或沙盒无网络时会抛错，\n此时需请管理员把依赖加入 workspace/skills/package.json。\n\n**参数：**\n- `packages`: 包名列表，如 [\"axios\", \"cheerio@1.0.0\"]\n- **返回值**: 安装输出\n\n**示例：**\n```typescript\nawait skills.npmInstall([\"cheerio\", \"node-fetch\"]);\n```"
       }
     ],
     "typeDefs": "interface SkillListEntry {\n    /** workspace/skills 下的真实目录名。读写文件请使用 path/id，不要猜 bindingName。 */\n    id: string;\n    /** SKILL.md frontmatter name 或目录名，用于展示。 */\n    name: string;\n    /** Sandbox 中注入的 JS 变量名，例如 find_ero。调用 Skill API 用它。 */\n    bindingName: string;\n    /** Agent 在 sandbox fs 中访问该 skill 的相对路径，例如 skills/find-ero。 */\n    path: string;\n    /** Skill 类型：agent 为 SKILL.md-only，code 为 index.ts/js 代码型。 */\n    kind: \"agent\" | \"code\";\n    /** 是否存在 SKILL.md 指南。 */\n    hasSkillMd: boolean;\n    /** 是否存在 .d.ts 类型声明。 */\n    hasDts: boolean;\n}"

@@ -10,6 +10,7 @@ import { clearConfigCache, loadConfig, saveConfig } from "../src/core/config.js"
 import { assertPublicUrl, isPrivateAddress, resetWebDispatchers } from "../src/core/web/http.js";
 import { detectCharset, extractHtml } from "../src/core/web/fetch.js";
 import { parseResponsesSearchOutput, webSearch } from "../src/core/web/search.js";
+import { isBlockedBuiltin } from "../src/sandbox/process-exec-guard.js";
 
 const dir = mkdtempSync(join(tmpdir(), "cgm-web-tools-"));
 const LLM = "llm_profiles:\n  default:\n    provider: openai\n    api_key: k\n    model: m\n";
@@ -137,7 +138,13 @@ describe("web.fetch content extraction", () => {
     });
 });
 
-describe("config: web", () => {
+describe("config: sandbox.process_exec and web", () => {
+    it("defaults process_exec to false", () => {
+        assert.equal(load("").cfg.sandbox.processExec, false);
+        assert.equal(load("sandbox:\n  process_exec: true\n").cfg.sandbox.processExec, true);
+        assert.equal(load("sandbox:\n  process_exec: \"yes\"\n").cfg.sandbox.processExec, false);
+    });
+
     it("parses web config and drops a search block without api_key", () => {
         const { cfg } = load([
             "web:",
@@ -150,8 +157,10 @@ describe("config: web", () => {
         assert.deepEqual(cfg.web, { proxy: "http://127.0.0.1:7890", fetch: { maxChars: 5000 } });
     });
 
-    it("round-trips web through saveConfig", () => {
+    it("round-trips process_exec and web through saveConfig", () => {
         const { path, cfg } = load([
+            "sandbox:",
+            "  process_exec: true",
             "web:",
             "  proxy: http://proxy:3128",
             "  search:",
@@ -161,9 +170,21 @@ describe("config: web", () => {
         ].join("\n") + "\n");
         assert.equal(saveConfig(cfg, path).ok, true);
         const saved = parseYAML(readFileSync(path, "utf-8")) as Record<string, any>;
+        assert.equal(saved.sandbox.process_exec, true);
         assert.deepEqual(saved.web, {
             proxy: "http://proxy:3128",
             search: { api_key: "sk", base_url: "https://gw.example/v1", model: "gpt-6-luna" },
         });
+    });
+});
+
+describe("process exec guard", () => {
+    it("matches bare and node: prefixed builtins only", () => {
+        for (const s of ["child_process", "node:child_process", "worker_threads", "node:worker_threads", "cluster", "node:cluster"]) {
+            assert.equal(isBlockedBuiltin(s), true, s);
+        }
+        for (const s of ["node:fs", "child_process/x", "./child_process", "node:child_process2"]) {
+            assert.equal(isBlockedBuiltin(s), false, s);
+        }
     });
 });

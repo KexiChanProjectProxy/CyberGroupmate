@@ -862,6 +862,8 @@ export class CodeActExecutor {
             platform,
             ...(task.useSkills ?? []),
         ]);
+        const processExecEnabled = currentConfig.sandbox?.processExec === true;
+        if (!processExecEnabled) allowedSkills.delete("shell");
         const todoItems = this.memory ? this.memory.todoList(this.chatId) : [];
         const systemVars = {
             personaName: this.personaName,
@@ -871,6 +873,8 @@ export class CodeActExecutor {
             privacyGuidance: currentConfig.privacy?.enforce !== "off",
             sandboxNoNetwork: currentConfig.sandbox?.mode === "remote",
             sandboxHasNetwork: currentConfig.sandbox?.mode !== "remote",
+            processExecEnabled,
+            processExecDisabled: !processExecEnabled,
             privacyMarkGuidance: currentConfig.privacy?.enforce !== "off" && currentConfig.privacy?.allowLlmMarkSensitive !== false,
             platformModule: platform,
             hasTodos: todoItems.length > 0,

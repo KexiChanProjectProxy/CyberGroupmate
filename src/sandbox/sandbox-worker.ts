@@ -31,6 +31,7 @@ import { installShell, setShellCallbacks } from "./modules/shell/index.js";
 import { getSkillListEntries, loadAllSkills, reloadAllSkills, installDepsRuntime, type LoadedSkill } from "./skill-loader.js";
 import { NOTEBOOK_RESERVED_NAMES, transformNotebookCode } from "./notebook-scope.js";
 import { configureLogger } from "../core/logger.js";
+import { installProcessExecGuard } from "./process-exec-guard.js";
 
 // ─── 全局 Skills 缓存（Worker 启动时加载一次） ───
 let loadedSkills: LoadedSkill[] = [];
@@ -779,6 +780,9 @@ rl.on("line", async (line: string) => {
 async function initWorker(): Promise<void> {
     // Worker 的 stdout 是 IPC 通道，把所有 logger 输出重定向到 printToHost
     configureLogger({ sink: (line) => printToHost(line) });
+
+    // sandbox.process_exec=false：在加载 Skills / 执行任何 agent 代码之前封堵子进程入口
+    if (process.env.SANDBOX_NO_PROCESS_EXEC === "1") installProcessExecGuard();
 
     // 从磁盘恢复 ctx（在 Skills 加载之前，因为 Skills 可能依赖 ctx 状态）
     loadCtxFromDisk();

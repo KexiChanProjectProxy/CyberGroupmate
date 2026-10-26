@@ -687,6 +687,10 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return result;
         }
 
+        if (method.startsWith("shell.") && !loadConfig().sandbox?.processExec) {
+            throw new Error("[Sandbox 安全限制] shell 模块已禁用（sandbox.process_exec=false）。只能写 JS 代码块。");
+        }
+
         switch (method) {
             case "shell.listTabs":
                 return sandbox.listShellTabs();
@@ -858,6 +862,9 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             const scope: EnvironmentVariable["scope"] = "sandbox";
             if (!isValidEnvKey(key)) {
                 throw new Error(`非法 env key: ${key}`);
+            }
+            if (key.startsWith("SANDBOX_")) {
+                throw new Error(`[Sandbox 安全限制] SANDBOX_* 是系统保留变量，sandbox 不能设置`);
             }
 
             const cfg = loadConfig("config.yaml", true);
@@ -1355,6 +1362,9 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                     `[Sandbox 安全限制] mcp.connect 只能按名称连接 config.yaml mcp_servers 中预配置的服务器。` +
                     `请求: "${name.slice(0, 80)}"；可用: ${available}`,
                 );
+            }
+            if (preset.transport === "stdio" && !loadConfig().sandbox?.processExec) {
+                throw new Error(`[Sandbox 安全限制] stdio MCP server "${preset.name}" 需要启动子进程，已随 sandbox.process_exec=false 禁用`);
             }
             const server = await mcpBridge.connect({
                 name: preset.name,

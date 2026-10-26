@@ -145,6 +145,7 @@
       if (!config.web) config.web = {};
       if (!config.web.search) config.web.search = { apiKey: '' };
       if (!config.web.fetch) config.web.fetch = {};
+      if (!config.sandbox) config.sandbox = { mode: 'local', inheritHostEnv: false, skillsSyncBack: false, processExec: false };
       if (!config.rateLimiting) config.rateLimiting = { enabled: false, maxConcurrency: 0, requestsPerMinute: 0, perProfile: {} };
       if (!config.rateLimiting.perProfile) config.rateLimiting.perProfile = {};
       // Adapter 启用状态：根据后端是否返回了有效配置来判断

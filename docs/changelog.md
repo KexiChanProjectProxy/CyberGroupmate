@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-26: 默认关闭 OS 级代码执行（`sandbox.process_exec`）
+
+CodeAct 仍然执行 JS 代码块，但能起进程的入口默认全部关闭；设 `sandbox.process_exec: true` 并重启即可恢复：
+
+- ```` ```bash ```` 代码块不再执行，observation 返回禁用提示，引导模型改写成 JS。
+- `shell.*`（含 `runBackground` / 后台唤醒）在 host、Sandbox、supervisor 三层拒绝；local supervisor 不再创建 PTY。
+- Worker 启动时（加载 Skills 前）封堵 `child_process` / `worker_threads` / `cluster` 的 `import` / `require` / `process.getBuiltinModule`，以及 `process.binding` / `process.dlopen`。
+- `skills.npmInstall` 运行时装包禁用（管理员维护的 `workspace/skills/package.json` 安装不受影响）。
+- `transport: stdio` 的预配置 MCP server 启动时跳过，`mcp.connect` 也会拒绝；streamable-http 不受影响。
+- `shell` 从子 agent 可用模块与 Meta 可指派名册中移除；executor system prompt 按开关渲染（去掉 bash / shell 段落，换成 web 示例）。
+- `runtime.env.set` 不再允许写 `SANDBOX_*` 保留变量。
+- Dashboard → CodeAct 页新增开关。
+- `background_agent`（claude-code / codex / copilot harness）是独立特性，不受此开关控制；不需要时请设 `background_agent.enabled: false`。
+
 ## 2026-10-26: 新增 web.search / web.fetch（子 agent 与 Meta，host 侧执行）
 
 - `web.search(query)` → `{ answer, sources, searched }`：OpenAI Responses API + `web_search` 内建工具；`web.search.api_key` / `base_url` / `model`（默认 `gpt-6-luna`）可配置，调用计入 Dashboard LLM 日志（caller `web-search`）。

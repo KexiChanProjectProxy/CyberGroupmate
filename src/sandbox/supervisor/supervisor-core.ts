@@ -69,12 +69,16 @@ export class SupervisorCore {
     private internalCounter = 0;
     private internalPending = new Map<string, () => void>();
     private homeReal = "";
+    /** 启动时固化：之后的 env_patch 不能重新打开 shell */
+    private readonly processExecDisabled: boolean;
 
     constructor(
         private readonly input: Readable,
         private readonly output: Writable,
         private readonly opts: SupervisorOptions,
-    ) {}
+    ) {
+        this.processExecDisabled = opts.env.SANDBOX_NO_PROCESS_EXEC === "1";
+    }
 
     /** 启动 worker 与 default PTY，完成后发送 ready（或 worker_exit） */
     async start(): Promise<void> {
@@ -142,6 +146,10 @@ export class SupervisorCore {
 
         try {
             await ready;
+            if (this.processExecDisabled) {
+                this.send({ type: "ready" });
+                return;
+            }
             this.pty = new PtyManager({
                 chatId: this.opts.chatId,
                 home,
@@ -269,6 +277,7 @@ export class SupervisorCore {
     }
 
     private requirePty(): PtyManager {
+        if (this.processExecDisabled) throw new Error("bash / shell 已禁用（sandbox.process_exec=false）");
         if (!this.pty) throw new Error("PTY not ready");
         return this.pty;
     }
