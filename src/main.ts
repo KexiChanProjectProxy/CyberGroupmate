@@ -20,6 +20,7 @@ import { installSkillsDependencies } from "./sandbox/skill-loader.js";
 import { createSandboxHostCallHandler } from "./sandbox/host-call-handler.js";
 import { buildSandboxRuntime } from "./sandbox/runtime-config.js";
 import { InboundMediaRelay } from "./sandbox/files/inbound-media.js";
+import { PROMPT_HISTORY_LIMIT } from "./memory-v2/context-manager.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
 import { createMemoryStore } from "./core/memory-factory.js";
 import {
@@ -617,7 +618,7 @@ async function main(): Promise<void> {
             content,
             ...(options ?? {}),
         }),
-        list: (options) => memory.listSessionDigests({ limit: options?.limit ?? 30 }),
+        list: (options) => memory.listSessionDigests({ limit: options?.limit ?? PROMPT_HISTORY_LIMIT }),
     });
     accumulator = new AttentionAccumulator(globalState, {
         windowMs: appConfig.subagent?.pollInterval ?? 5000,
@@ -1411,7 +1412,7 @@ async function main(): Promise<void> {
                 sinceTs,
                 // digest 与任务共用同一个周期窗口：上次做梦时已消化的播报不再重复进入本次上下文
                 sessionDigests: memory.listSessionDigests({
-                    limit: 30,
+                    limit: PROMPT_HISTORY_LIMIT,
                     ...(sinceTs != null ? { after: new Date(sinceTs).toISOString() } : {}),
                 }).slice().reverse(),
             }),

@@ -13,6 +13,7 @@
  * @see harness/manager.ts（调用方）、harness/prompt.ts（消费 background-dreaming.md）
  */
 
+import { PROMPT_HISTORY_LIMIT } from "../memory-v2/context-manager.js";
 import { getGroupModelKey, getDunbarTierLabel } from "../core/chat-id.js";
 import { deriveChatType } from "../context-engine/prompt-renderer-utils.js";
 import { formatTsForPrompt } from "../core/timezone.js";
@@ -115,7 +116,7 @@ export function buildDreamingDigest(deps: DreamingContextDeps): string | null {
 function renderSessionDigests(digests: NonNullable<DreamingContextDeps["sessionDigests"]>): string | null {
     if (digests.length === 0) return null;
     const lines = ["# 最近全局意识流 / Session Digests"];
-    for (const digest of digests.slice(-30)) {
+    for (const digest of digests.slice(-PROMPT_HISTORY_LIMIT)) {
         const source = [
             digest.actorType,
             digest.actorId,

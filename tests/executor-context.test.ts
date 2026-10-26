@@ -6,12 +6,13 @@ import { getExecutorTaskProviders } from "../src/context-engine/providers/execut
 import { loadApiTypeDefs } from "../src/subagent/code-act-executor.js";
 
 describe("executor context providers", () => {
-    it("renders the recent 30 session digests scoped to this chat", () => {
+    it("renders the recent 1000 session digests scoped to this chat", () => {
         const engine = new ContextEngine("executor-digest-test");
         engine.registerAll(getExecutorTaskProviders());
 
-        const digests = Array.from({ length: 35 }, (_, index) => ({
-            sourceChatId: "telegram:g1", createdAt: `2026-05-01T${String(index).padStart(2, "0")}:00:00.000Z`,
+        const digests = Array.from({ length: 1005 }, (_, index) => ({
+            sourceChatId: "telegram:g1",
+            createdAt: new Date(Date.UTC(2026, 0, 1) + index * 60_000).toISOString(),
             content: `digest ${index + 1}`,
         }));
 
@@ -23,9 +24,9 @@ describe("executor context providers", () => {
         });
 
         assert.match(result.historicalContent, /# 历史 Session Digests/);
-        assert.match(result.historicalContent, /digest 6/);
-        assert.match(result.historicalContent, /digest 35/);
-        assert.doesNotMatch(result.historicalContent, /digest 5/);
+        assert.match(result.historicalContent, /digest 6(?!\d)/);
+        assert.match(result.historicalContent, /digest 1005(?!\d)/);
+        assert.doesNotMatch(result.historicalContent, /digest 5(?!\d)/);
     });
 
     it("only persists new Meta session digests after commit", () => {

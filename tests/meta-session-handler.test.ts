@@ -413,7 +413,7 @@ describe("createMetaSessionHandler", () => {
         assert.ok(secondMeta < secondModel);
     });
 
-    it("falls back to 20 recent messages when attention has no new message delta", async () => {
+    it("falls back to recent messages when attention has no new message delta", async () => {
         const sandbox = new MetaSandbox({});
         const llmCalls: ChatMessage[][] = [];
         let requestedLimit = 0;
@@ -467,7 +467,7 @@ describe("createMetaSessionHandler", () => {
         const secondCurrentPrompt = llmCalls[1]
             ?.filter((message) => message.role === "user")
             .at(-1)?.content ?? "";
-        assert.equal(requestedLimit, 20);
+        assert.equal(requestedLimit, 1000);
         assert.match(secondCurrentPrompt, /## 最近消息上下文/);
         assert.match(secondCurrentPrompt, /兜底附上最近 20 条消息/);
         assert.match(secondCurrentPrompt, /历史现场 1/);
@@ -707,11 +707,11 @@ describe("createMetaSessionHandler", () => {
         assert.match(secondPrompt, /## 话题注册表增量/);
     });
 
-    it("renders 30 recent session digests for proactive idle", async () => {
+    it("renders 1000 recent session digests for proactive idle", async () => {
         const sandbox = new MetaSandbox({});
         const llmCalls: ChatMessage[][] = [];
-        const digests = Array.from({ length: 35 }, (_, index) => ({
-            createdAt: `2026-05-01T${String(index).padStart(2, "0")}:00:00.000Z`,
+        const digests = Array.from({ length: 1005 }, (_, index) => ({
+            createdAt: new Date(Date.UTC(2026, 0, 1) + index * 60_000).toISOString(),
             content: `digest ${index + 1}`,
         }));
         const handler = createMetaSessionHandler({
@@ -741,9 +741,9 @@ describe("createMetaSessionHandler", () => {
             ?.filter((message) => message.role === "user")
             .map((message) => message.content)
             .join("\n\n") ?? "";
-        assert.match(prompt, /digest 6/);
-        assert.match(prompt, /digest 35/);
-        assert.doesNotMatch(prompt, /digest 5/);
+        assert.match(prompt, /digest 6(?!\d)/);
+        assert.match(prompt, /digest 1005(?!\d)/);
+        assert.doesNotMatch(prompt, /digest 5(?!\d)/);
         assert.match(prompt, /主动巡视/);
     });
 

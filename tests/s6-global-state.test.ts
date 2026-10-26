@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { rmSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 
+import { PROMPT_HISTORY_LIMIT } from "../src/memory-v2/context-manager.js";
 import { GlobalState } from "../src/main-agent/global-state.js";
 import { resolveMetaHistoryBudget } from "../src/main-agent/meta-history-retention.js";
 
@@ -67,14 +68,14 @@ describe("S6: Global State", () => {
         gs.dispose();
     });
 
-    it("#4 addSessionDigest legacy JSON fallback cap at 30", () => {
+    it("#4 addSessionDigest legacy JSON fallback cap at PROMPT_HISTORY_LIMIT", () => {
         const dir = tempDir();
         const gs = new GlobalState({ filePath: join(dir, "s.json"), autoSaveInterval: 0 });
-        for (let i = 0; i < 32; i++) gs.addSessionDigest(`digest-${i}`);
+        for (let i = 0; i < PROMPT_HISTORY_LIMIT + 2; i++) gs.addSessionDigest(`digest-${i}`);
         const digests = gs.getSessionDigests();
-        assert.equal(digests.length, 30);
+        assert.equal(digests.length, PROMPT_HISTORY_LIMIT);
         assert.equal(digests[0].content, "digest-2");
-        assert.equal(digests.at(-1)?.content, "digest-31");
+        assert.equal(digests.at(-1)?.content, `digest-${PROMPT_HISTORY_LIMIT + 1}`);
         gs.dispose();
     });
 

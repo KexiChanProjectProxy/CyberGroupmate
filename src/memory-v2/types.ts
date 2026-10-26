@@ -779,7 +779,7 @@ export interface IMemoryStoreV2 {
      */
     recall(query: string, options?: RecallOptions): Promise<RecallResult>;
 
-    /** 获取最近 session digests，默认 30 条 */
+    /** 获取最近 session digests，默认 1000 条 */
     listSessionDigests(options?: SessionDigestSearchOptions): SessionDigestEntry[];
 
     /** 搜索 agent intentions / dispatches / dream results / consciousness memory */

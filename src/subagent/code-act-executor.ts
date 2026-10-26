@@ -49,7 +49,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { shouldCompact, compact as contextManagerCompact, forceTrim as contextManagerForceTrim, estimateMessagesTokens, estimateTokens } from "../memory-v2/context-manager.js";
+import { shouldCompact, compact as contextManagerCompact, forceTrim as contextManagerForceTrim, estimateMessagesTokens, estimateTokens, PROMPT_HISTORY_LIMIT } from "../memory-v2/context-manager.js";
 import { DEFAULT_BANNED_WORDS } from "../core/banned-words.js";
 import { registerPendingMessageSignal, type PendingMessageSignal } from "../sandbox/send-interrupt.js";
 
@@ -1535,7 +1535,7 @@ export class CodeActExecutor {
     private async refreshTaskMessages(task: CodeActReplyTask): Promise<void> {
         if (!this.memory) return;
         try {
-            const freshMessages = this.memory.getRecentMessages(this.chatId, 20);
+            const freshMessages = this.memory.getRecentMessages(this.chatId, PROMPT_HISTORY_LIMIT);
             if (freshMessages.length === 0) return;
 
             const msgIdToName = new Map<string, string>();

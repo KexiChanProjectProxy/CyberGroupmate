@@ -9,7 +9,7 @@ import { getMetaProviders } from "../context-engine/providers/meta-providers.js"
 import { renderTemplate } from "../context-engine/template-engine.js";
 import type { ContextManifest, SectionNode } from "../context-engine/types.js";
 import type { IMemoryStoreV2 } from "../memory-v2/index.js";
-import { forceTrim, shouldCompact } from "../memory-v2/context-manager.js";
+import { forceTrim, shouldCompact, PROMPT_HISTORY_LIMIT } from "../memory-v2/context-manager.js";
 import type { MetaSandbox } from "../meta-sandbox/meta-sandbox.js";
 import { runMetaSession, type MetaLLMCaller, type MetaSessionResult } from "../meta-sandbox/meta-session-runner.js";
 import { buildMetaApiPrefixMap, buildMetaApiReference, lookupMetaApiDocs } from "../meta-sandbox/meta-api/module-registry.js";
@@ -198,7 +198,7 @@ async function buildMetaMessages(
     const isProactiveIdle = entries.some((entry) => entry.source === "PROACTIVE_IDLE");
     const globalRender = engine.render({
         sessionDigests: deps.globalState.getSessionDigests(),
-        sessionDigestLimit: isProactiveIdle ? 30 : undefined,
+        sessionDigestLimit: isProactiveIdle ? PROMPT_HISTORY_LIMIT : undefined,
         todos: buildGlobalTodos(deps.memory),
         callbacks,
     });
@@ -468,7 +468,7 @@ function buildRecentMessageContext(
     }
 
     try {
-        const recent = memory.getRecentMessages(entry.chatId, 20);
+        const recent = memory.getRecentMessages(entry.chatId, PROMPT_HISTORY_LIMIT);
         if (recent.length > 0) {
             return {
                 messages: enrichAttentionRecentMessages(memory, entry.chatId, [...recent].reverse().map((message) => ({

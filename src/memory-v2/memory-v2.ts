@@ -3882,7 +3882,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
     }
 
     private querySessionDigests(options: SessionDigestSearchOptions = {}): SessionDigestEntry[] {
-        const limit = Math.min(Math.max(options.limit ?? 30, 1), 200);
+        const limit = Math.min(Math.max(options.limit ?? 1000, 1), 1000);
         const conditions: string[] = [];
         const params: unknown[] = [];
         const query = options.query?.trim();
@@ -3943,7 +3943,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
     }
 
     private querySessionDigestsLike(options: SessionDigestSearchOptions): SessionDigestEntry[] {
-        const limit = Math.min(Math.max(options.limit ?? 30, 1), 200);
+        const limit = Math.min(Math.max(options.limit ?? 1000, 1), 1000);
         const conditions: string[] = [];
         const params: unknown[] = [];
         const query = options.query?.trim();

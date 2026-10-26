@@ -12,6 +12,7 @@ import { getRawId } from "../../core/chat-id.js";
 import type { VisionConfig } from "../../core/config.js";
 import { formatTsForPrompt, getWeekdayLabel } from "../../core/timezone.js";
 
+import { PROMPT_HISTORY_LIMIT } from "../../memory-v2/context-manager.js";
 const META_ASSOCIATED_MEMORIES_ENABLED = false;
 
 function scopeByChatId(ctx: ResolveContext): string | undefined {
@@ -360,8 +361,8 @@ export const metaHistoricalProvider: SectionProvider<MetaHistoricalData> = {
             return null;
         }
         const limit = typeof ctx.sessionDigestLimit === "number"
-            ? Math.min(Math.max(Math.floor(ctx.sessionDigestLimit), 1), 30)
-            : 30;
+            ? Math.min(Math.max(Math.floor(ctx.sessionDigestLimit), 1), PROMPT_HISTORY_LIMIT)
+            : PROMPT_HISTORY_LIMIT;
         return { sessionDigests: sessionDigests.slice(-limit) };
     },
     diff(current, committed): DiffResult<MetaHistoricalData> {
@@ -725,7 +726,7 @@ export const metaMessagesProvider: SectionProvider<MetaMessagesData> = {
         if (messages.length === 0) {
             return null;
         }
-        const sliced = messages.slice(-30);
+        const sliced = messages.slice(-PROMPT_HISTORY_LIMIT);
         const attendMediaMode = ctx.attendMediaMode as VisionConfig["attendMode"] | undefined;
         const stickerDescriptionLookup = ctx.stickerDescriptionLookup as StickerDescriptionLookup | undefined;
         return {

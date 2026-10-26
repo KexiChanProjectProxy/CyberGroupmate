@@ -28,6 +28,9 @@ export interface ContextBudget {
     maxBriefingTokens: number;
 }
 
+/** 注入 prompt 的近期群消息和 session digest 条数。1M 窗口下不再卡在 30。 */
+export const PROMPT_HISTORY_LIMIT = 1000;
+
 /** 默认预算 */
 export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
     effectiveContextWindow: 32000,

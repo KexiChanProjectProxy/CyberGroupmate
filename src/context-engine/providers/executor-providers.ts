@@ -12,6 +12,7 @@
  * 引擎会按声明式策略自动处理。
  */
 
+import { PROMPT_HISTORY_LIMIT } from "../../memory-v2/context-manager.js";
 import type { SectionProvider, ResolveContext, DiffResult } from "../types.js";
 import { deriveChatType } from "../prompt-renderer-utils.js";
 import { formatTsForPrompt, getWeekdayLabel } from "../../core/timezone.js";
@@ -325,8 +326,8 @@ function renderTargetMessagesBody(data: ExecutorTargetMessagesData): string {
 }
 
 function clampSessionDigestLimit(value: unknown): number {
-    if (typeof value !== "number" || !Number.isFinite(value)) return 30;
-    return Math.max(1, Math.min(30, Math.floor(value)));
+    if (typeof value !== "number" || !Number.isFinite(value)) return PROMPT_HISTORY_LIMIT;
+    return Math.max(1, Math.min(PROMPT_HISTORY_LIMIT, Math.floor(value)));
 }
 
 function stripDigestForSubagent(content: string): string {

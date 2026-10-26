@@ -13,6 +13,7 @@
  * 参考设计：subagent.md §9, subtask.md S6
  */
 
+import { PROMPT_HISTORY_LIMIT } from "../memory-v2/context-manager.js";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
@@ -45,7 +46,7 @@ const DEFAULT_CONFIG: GlobalStateConfig = {
     autoSaveInterval: 30000,
 };
 
-const MAX_SESSION_DIGESTS = 30;
+const MAX_SESSION_DIGESTS = PROMPT_HISTORY_LIMIT;
 const MAX_DISPATCHED_SUBAGENT_TASKS = 500;
 
 export interface SessionDigestAdapter {
@@ -269,7 +270,7 @@ export class GlobalState {
 
     getSessionDigests(): SessionDigestEntry[] {
         if (this.sessionDigestAdapter) {
-            return this.sessionDigestAdapter.list({ limit: 30 }).slice().reverse();
+            return this.sessionDigestAdapter.list({ limit: PROMPT_HISTORY_LIMIT }).slice().reverse();
         }
         return [...this.state.sessionDigests];
     }
