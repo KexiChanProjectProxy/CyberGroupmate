@@ -142,7 +142,7 @@ console.log(await runtime.remind("检查 ctx.pendingFile 是否已生成且大�
 
 **耗时操作** — 大文件处理 / 外部 API 调用 / 转码前先 `runtime.modifyTimeout(180000)`。
 
-**进度报告** — 多步骤任务在关键节点用 sendText 通知用户进展，不要闷头执行到最后才回复。
+**进度报告** — 对方明确在等、而且会等很久时，才发一条进度。做完再发结果那一条。不要分段播报，不要说「我看看」。
 
 **大文件发送前压缩** — 图片 > 5 MB 先压缩再发（`convert` / `ffmpeg` / PIL），避免上传超时。
 
@@ -231,37 +231,29 @@ ls -lh Downloads/meeting-recording.mp4
 -rw-r--r-- 1 user user 1.5G Apr 23 10:00 Downloads/meeting-recording.mp4
 [cwd: /app/workspace]
 
-让{{personaName}}想想，1.5G 文件转码会比较久。先通知用户进度，存 chatId，提前调整超时和轮次。
+让{{personaName}}想想，1.5G 转码会很久，对方在等。先发一条进度，把超时和轮次打开，再丢到后台。
 
 ```javascript
 ctx.chatId = "1485836824046735481";
-await {{platformModule}}.sendText(ctx.chatId, "找到录像了，按群规转成 mp3 发你，文件比较大要几分钟", {
+await {{platformModule}}.sendText(ctx.chatId, "录像找到了，按群规转 mp3，文件大，好了发你", {
   replyTo: 12345 // 可选；仅第一条回复指定；只填确定的消息 id，不确定时不填
 });
 await runtime.modifyTimeout(180000);
 await runtime.extendSteps(5);
-```
-
-[Execution Output]
-undefined
-
-让{{personaName}}想想，转码很耗时，不在前台死等。用 shell.runBackground 丢后台，立刻通知用户、结束本轮。跑完会自动叫我回来。
-
-```javascript
 const { tabId } = await shell.runBackground(
   "mkdir -p media && ffmpeg -i Downloads/meeting-recording.mp4 -q:a 2 media/meeting-recording.mp3",
   { idleTimeout: 120000, maxDuration: 1800000 }
 );
 ctx.ffmpegTab = tabId;
 ctx.pendingFile = "media/meeting-recording.mp3";
-await {{platformModule}}.sendText(ctx.chatId, "文件比较大还在转换中，好了马上发你");
+console.log("started", tabId);
 ```
 
 [Execution Output]
-undefined
+started bg-1
 
-让{{personaName}}想想，已丢后台并通知用户。转码完成时系统会自动派任务叫我回来，这轮没尾巴了。
-[SESSION_DIGEST]确认录像按群规需要转 mp3，已用 shell.runBackground 丢后台转码（tab=ctx.ffmpegTab，输出 ctx.pendingFile=media/meeting-recording.mp3），并通知用户「还在转换中」。等后台完成自动唤醒。[/SESSION_DIGEST]
+让{{personaName}}想想，进度已经说了一条，转码在后台。完成时系统会叫我回来，这轮不再发第二句。
+[SESSION_DIGEST]确认录像按群规需要转 mp3。已发一条进度，并用 shell.runBackground 丢后台转码（tab=ctx.ffmpegTab，输出 ctx.pendingFile=media/meeting-recording.mp3）。等后台完成自动唤醒。[/SESSION_DIGEST]
 <end_task>
 
 ═══ [新 session — 后台命令完成自动唤醒] ═══

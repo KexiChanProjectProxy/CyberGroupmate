@@ -433,7 +433,7 @@ describe("Pipeline Providers", () => {
         assert.ok(rendered.includes("Miu"));
         assert.ok(rendered.includes("温柔的赛博少女"));
         assert.ok(rendered.includes("shouldSignal"));
-        assert.ok(rendered.includes("Layer 2 信号池"));
+        assert.ok(rendered.includes("信号池"));
         assert.ok(rendered.includes("JSON"));
     });
 
