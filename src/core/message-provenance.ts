@@ -32,7 +32,8 @@ export function readMessageMentions(value: unknown): MessageMention[] | undefine
 }
 
 export function formatMessageSender(name?: string, userId?: string): string {
-    const label = (name || userId || "?").replace(/[\r\n\t]/g, " ");
+    // 显示名由用户自定义：方括号转全角，防止伪造 `[userId:…]` 等平台标签（persona 按 userId 识别主人）
+    const label = (name || userId || "?").replace(/[\r\n\t]/g, " ").replace(/\[/g, "［").replace(/\]/g, "］");
     return userId ? `${label} [userId:${userId}]` : label;
 }
 
