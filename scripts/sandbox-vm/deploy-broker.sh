@@ -7,6 +7,7 @@
 #   broker 自身只按白名单（C4 机型、已建子网的 region、固定镜像 / tag / 无 SA / 无外网 IP / Spot）创建 VM。
 # - daemon VM 的服务账号只获得该 Cloud Run 服务的 roles/run.invoker，没有任何 compute 权限。
 # - 服务不允许匿名访问（--no-allow-unauthenticated）。
+# - Cloud Run 只跑 1 个实例：broker 在进程内串行化 create，MAX_INSTANCES 才是硬上限（多个 daemon 共享）。
 #
 # 用法：
 #   REGION=us-central1 DAEMON_SA=daemon@PROJECT.iam.gserviceaccount.com \
@@ -90,7 +91,7 @@ g run deploy "$SERVICE" --region "$REGION" --source "$tmp" \
   --build-service-account "projects/$PROJECT/serviceAccounts/$BUILDER_SA" \
   --no-allow-unauthenticated \
   --env-vars-file "$tmp/env.yaml" \
-  --cpu 1 --memory 512Mi --concurrency 20 --min-instances 0 --max-instances 3 --timeout 600 \
+  --cpu 1 --memory 512Mi --concurrency 20 --min-instances 0 --max-instances 1 --timeout 600 \
   --quiet
 
 retry_iam g run services add-iam-policy-binding "$SERVICE" --region "$REGION" \

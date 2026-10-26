@@ -147,6 +147,13 @@ describe("sandbox broker", () => {
         await assert.rejects(broker.create({ chatKey: "e".repeat(32), region: "us-central1", machineType: "c4-standard-2" }), (e: unknown) => e instanceof BrokerError && e.status === 429);
     });
 
+    it("enforces the instance cap under concurrent creates", async () => {
+        const { broker, compute } = makeBroker({ maxInstances: 2 });
+        const results = await Promise.allSettled(["a", "b", "c", "d"].map((c) => broker.create({ chatKey: c.repeat(32), region: "us-central1", machineType: "c4-standard-2" })));
+        assert.equal(results.filter((r) => r.status === "fulfilled").length, 2);
+        assert.equal(compute.instances.size, 2);
+    });
+
     it("deletes the same chat's older VMs (orphans) before creating a new one", async () => {
         const { broker, compute } = makeBroker({ maxInstances: 2 });
         const first = await broker.create({ chatKey: CHAT, region: "us-central1", machineType: "c4-standard-2" });

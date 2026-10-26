@@ -96,6 +96,8 @@ export class BrokerError extends Error {
 
 export class SandboxBroker {
     private zoneCache = new Map<string, string[]>();
+    /** create 串行化：先列出再创建，并发请求否则会同时通过 maxInstances 检查 */
+    private createQueue: Promise<unknown> = Promise.resolve();
 
     constructor(readonly cfg: BrokerConfig, private readonly gce: GceClient) {}
 
@@ -174,7 +176,13 @@ export class SandboxBroker {
         return zones;
     }
 
-    async create(input: unknown): Promise<{ name: string; zone: string; region: string; machineType: string }> {
+    create(input: unknown): Promise<{ name: string; zone: string; region: string; machineType: string }> {
+        const run = this.createQueue.then(() => this.createLocked(input));
+        this.createQueue = run.catch(() => undefined);
+        return run;
+    }
+
+    private async createLocked(input: unknown): Promise<{ name: string; zone: string; region: string; machineType: string }> {
         const parsed = createSchema.safeParse(input);
         if (!parsed.success) throw new BrokerError(400, "bad_request", "invalid request");
         const { chatKey, region, machineType } = parsed.data;

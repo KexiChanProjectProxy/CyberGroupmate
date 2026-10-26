@@ -216,6 +216,27 @@ npx tsx scripts/sandbox-vm/acceptance.ts
 
 验收（daemon VM 上运行 `acceptance.ts`，BROKER_URL 模式）：19/19；VM 按当日价格开在 northamerica-northeast1，会话结束后全部删除。
 
+### 多个 bot daemon 共享 sandbox VM 池（2026-10-24）
+
+| bot | daemon VM | 内网 IP | 模型（经 cch 网关，各自一把 key） |
+|---|---|---|---|
+| 大肥鱼 @SuperCyberCatbot | `cgm-daemon`（e2-medium，有外网 IP，兼 NAT 网关） | 10.10.0.2 | deepseek / mimo |
+| 阿谱 @kexigroupbot | `cgm-glm`（e2-small，无外网 IP） | 10.10.0.3 | `cc/z-ai/glm-5.3-flash` |
+| 小俳 @KexiChatbot | `cgm-haiku`（e2-small，无外网 IP） | 10.10.0.4 | `anthropic/claude-haiku-5-5` |
+| 米莫 @keximimobot | `cgm-mimo`（e2-small，无外网 IP） | 10.10.0.5 | `opencode/mimo-v2.6-flash` |
+| 火花 @kexichan_bili_notice_bot | `cgm-muse`（e2-small，无外网 IP） | 10.10.0.6 | `cc/tencent/hy3-paid`（Command Code） |
+
+- 人格见 `deploy/daemon/persona-*.yaml`；新 VM 上代码在 `/home/cgm/cgm`（系统用户 `cgm`），systemd 单元同 `cybergroupmate.service`。
+- **出口**：新 VM 带 tag `cgm-nat-client`，路由 `cgm-nat-default`（0.0.0.0/0 → `cgm-daemon`，优先级 800，仅该 tag）；
+  `cgm-daemon` 开启 `canIpForward`，tag `cgm-nat`，防火墙 `cgm-nat-allow-clients`；主机上 `cgm-nat.service`
+  （`/usr/local/sbin/cgm-nat.sh`）只为 10.10.0.3–6 做 MASQUERADE，且拒绝经它转发到私网 / metadata。
+- **LLM 网关**：新 VM 与 `cgm-daemon` 共用服务账号 `cgm-daemon@`，peering 防火墙按 SA 放行；
+  网关主机 nftables 追加 `ip saddr { 10.10.0.3-6 } tcp dport 23000 accept`。
+- **sandbox 池**：broker `BROKER_MAX_INSTANCES=5`，Cloud Run 单实例 + 进程内串行 create，5 台为全局硬上限；
+  临时 VM 镜像以 `HOST_VM_IP=10.10.0.2,…,10.10.0.6` 重建（`cgm-sandbox-ephemeral-202610240427`）。
+  broker 的 chatKey 含 daemon 主机名（`ephemeral-transport.ts`），不同 bot 在同一群里的 VM 互不当作孤儿删除。
+- 访问新 bot 的 Dashboard：`gcloud compute ssh cgm-glm --tunnel-through-iap -- -L 6767:127.0.0.1:6767`。
+
 ### 访问其他 VPC 中的单个服务（仅 daemon）
 
 daemon 需要访问 default 网络中的 LLM 网关 `10.128.0.10:23000`（`llm-gateway-vm`）：

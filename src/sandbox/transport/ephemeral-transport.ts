@@ -7,6 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { hostname } from "node:os";
 import type { Readable } from "node:stream";
 import { createLogger } from "../../core/logger.js";
 import { BrokerClient, BrokerRequestError, type SandboxVm } from "../provisioner/broker-client.js";
@@ -28,6 +29,8 @@ export interface EphemeralProvisionerConfig {
     /** 从开始创建到 sandboxd 可连接的上限 */
     vmReadyTimeoutMs: number;
     connectRetryMs?: number;
+    /** broker 中区分不同 daemon 的身份（默认主机名）：多个 daemon 共享一个 broker 时，同一 chat 的 VM 互不视为孤儿 */
+    owner?: string;
 }
 
 export interface EphemeralSession extends RemoteSession {
@@ -52,7 +55,7 @@ export async function openEphemeralSession(
     request: { chatId: string; env: Record<string, string>; shellPath: string; skillsHash: string | null },
     deps: { packSkills: () => Readable },
 ): Promise<EphemeralSession> {
-    const chatKey = createHash("sha256").update(request.chatId).digest("hex").slice(0, 32);
+    const chatKey = createHash("sha256").update(`${cfg.owner ?? hostname()}\n${request.chatId}`).digest("hex").slice(0, 32);
     const started = Date.now();
     const regions = await orderRegions(cfg);
 
